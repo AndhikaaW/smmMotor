@@ -7,6 +7,7 @@ import {
   query,
   runTransaction,
   serverTimestamp,
+  startAfter,
   updateDoc,
   where,
 } from "firebase/firestore";
@@ -29,12 +30,23 @@ export const productSchema = z.object({
 export type ProductInput = z.infer<typeof productSchema>;
 
 type ProductDoc = Omit<Product, "id">;
-
 export async function listProducts(): Promise<Product[]> {
   const snap = await getDocs(
-    query(collection(db, "products"), orderBy("name"), limit(500)),
+    query(collection(db, "products"), orderBy("name"), limit(200)),
   );
   return snap.docs.map((d) => ({ id: d.id, ...(d.data() as ProductDoc) }));
+}
+
+export async function countLowStock(sampleSize = 200): Promise<number> {
+  const snap = await getDocs(
+    query(collection(db, "products"), orderBy("name"), limit(sampleSize)),
+  );
+  let count = 0;
+  for (const d of snap.docs) {
+    const p = d.data() as ProductDoc;
+    if (p.isActive && p.stock <= p.minimumStock) count += 1;
+  }
+  return count;
 }
 
 export async function getProductByBarcode(barcode: string): Promise<Product | null> {
@@ -44,6 +56,40 @@ export async function getProductByBarcode(barcode: string): Promise<Product | nu
   if (snap.empty) return null;
   const d = snap.docs[0];
   return { id: d.id, ...(d.data() as ProductDoc) };
+}
+
+export interface ProductPage {
+  rows: Product[];
+  lastVisible: unknown | null;
+}
+
+export async function searchProductsByName(
+  keyword: string,
+  pageSize = 20,
+  cursor?: unknown,
+): Promise<ProductPage> {
+  const q = keyword.trim();
+  const end = q + String.fromCharCode(0xf8ff);
+  const clauses = [
+    orderBy("name"),
+    ...(cursor ? [startAfter(cursor as never)] : []),
+    limit(pageSize),
+  ];
+  const snap = q
+    ? await getDocs(
+        query(
+          collection(db, "products"),
+          where("name", ">=", q),
+          where("name", "<", end),
+          ...clauses,
+        ),
+      )
+    : await getDocs(query(collection(db, "products"), ...clauses));
+  const last = snap.docs[snap.docs.length - 1];
+  return {
+    rows: snap.docs.map((d) => ({ id: d.id, ...(d.data() as ProductDoc) })),
+    lastVisible: last ?? null,
+  };
 }
 
 export async function createProduct(input: ProductInput) {
@@ -67,7 +113,7 @@ export async function createProduct(input: ProductInput) {
 export async function updateProduct(id: string, input: ProductInput) {
   const parsed = productSchema.parse(input);
   const current = await getDocs(
-    query(collection(db, "products"), where("barcode", "==", parsed.barcode), limit(2)),
+    query(collection(db, "products"), where("barcode", "==", parsed.barcode), limit(1)),
   );
   if (current.docs.some((d) => d.id !== id))
     throw new Error("Barcode sudah dipakai produk lain.");

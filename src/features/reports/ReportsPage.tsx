@@ -1,86 +1,48 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { summarizeDay, summarizeMonth } from "@/lib/firestore/transactions";
+import { revenueTrendMonthly, summarizeDay, summarizeMonth } from "@/lib/firestore/transactions";
 import type { DaySummary } from "@/lib/firestore/transactions";
+import { PageHeader } from "@/components/ui/shared";
+import { Card, CardContent } from "@/components/ui/card";
+import { PaymentDonutCard, RevenueBarCard, TopListBarCard } from "@/components/charts/ReportCharts";
 
-function SummaryView({ summary }: { summary: DaySummary }) {
+function SummaryView({ summary, loading }: { summary: DaySummary | undefined; loading: boolean }) {
+  const statCards = [
+    { label: "Omzet", value: summary ? `Rp${summary.revenue.toLocaleString("id-ID")}` : "…" },
+    { label: "Transaksi", value: summary ? String(summary.count) : "…" },
+    { label: "Produk Terjual", value: summary ? String(summary.productQty) : "…" },
+    { label: "Jasa Terjual", value: summary ? String(summary.serviceQty) : "…" },
+  ];
   return (
     <div>
       <div className="mt-4 grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <div className="rounded-xl border border-border bg-surface p-4">
-          <p className="text-xs text-muted">Omzet</p>
-          <p className="mt-1 text-xl font-bold">
-            Rp{summary.revenue.toLocaleString("id-ID")}
-          </p>
-        </div>
-        <div className="rounded-xl border border-border bg-surface p-4">
-          <p className="text-xs text-muted">Transaksi</p>
-          <p className="mt-1 text-xl font-bold">{summary.count}</p>
-        </div>
-        <div className="rounded-xl border border-border bg-surface p-4">
-          <p className="text-xs text-muted">Produk Terjual</p>
-          <p className="mt-1 text-xl font-bold">{summary.productQty}</p>
-        </div>
-        <div className="rounded-xl border border-border bg-surface p-4">
-          <p className="text-xs text-muted">Jasa Terjual</p>
-          <p className="mt-1 text-xl font-bold">{summary.serviceQty}</p>
-        </div>
+        {statCards.map((s) => (
+          <Card key={s.label}>
+            <CardContent className="p-4">
+              <p className="text-xs text-muted">{s.label}</p>
+              <p className="mt-1 text-xl font-bold">{s.value}</p>
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
-      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <section className="rounded-xl border border-border bg-surface p-4">
-          <h2 className="font-bold">Pembayaran</h2>
-          <ul className="mt-2 space-y-1 text-sm">
-            {(
-              Object.entries(summary.byPayment) as [string, number][]
-            ).map(([m, v]) => (
-              <li key={m} className="flex justify-between">
-                <span className="text-muted">{m}</span>
-                <span className="font-medium">
-                  Rp{v.toLocaleString("id-ID")}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
-        <section className="rounded-xl border border-border bg-surface p-4">
-          <h2 className="font-bold">Produk Terlaris</h2>
-          {summary.topProducts.length === 0 ? (
-            <p className="mt-2 text-sm text-muted">—</p>
-          ) : (
-            <ol className="mt-2 space-y-1 text-sm">
-              {summary.topProducts.map((p, i) => (
-                <li key={p.name} className="flex justify-between gap-2">
-                  <span>
-                    {String(i + 1).padStart(2, "0")} {p.name}
-                  </span>
-                  <span className="font-medium">
-                    {p.qty} • Rp{p.revenue.toLocaleString("id-ID")}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          )}
-        </section>
-        <section className="rounded-xl border border-border bg-surface p-4">
-          <h2 className="font-bold">Jasa Terlaris</h2>
-          {summary.topServices.length === 0 ? (
-            <p className="mt-2 text-sm text-muted">—</p>
-          ) : (
-            <ol className="mt-2 space-y-1 text-sm">
-              {summary.topServices.map((s, i) => (
-                <li key={s.name} className="flex justify-between gap-2">
-                  <span>
-                    {String(i + 1).padStart(2, "0")} {s.name}
-                  </span>
-                  <span className="font-medium">
-                    {s.qty} • Rp{s.revenue.toLocaleString("id-ID")}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          )}
-        </section>
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <TopListBarCard
+          title="Produk Terlaris"
+          description="5 produk dengan qty tertinggi."
+          items={summary?.topProducts ?? []}
+          valueLabel="pcs"
+        />
+        <TopListBarCard
+          title="Jasa Terlaris"
+          description="5 jasa dengan qty tertinggi."
+          items={summary?.topServices ?? []}
+          valueLabel="x"
+        />
+      </div>
+
+      <div className="mt-4">
+        <PaymentDonutCard byPayment={summary?.byPayment} loading={loading} />
       </div>
     </div>
   );
@@ -104,14 +66,23 @@ export function ReportsPage() {
     },
     enabled: tab === "monthly",
   });
+  const [trendYear, trendMonth] = month.split("-").map(Number);
+  const trendQuery = useQuery({
+    queryKey: ["report-trend", month],
+    queryFn: () => revenueTrendMonthly(trendYear, trendMonth),
+    enabled: tab === "monthly",
+    staleTime: 5 * 60 * 1000,
+  });
 
   const loading = tab === "daily" ? dayQuery.isLoading : monthQuery.isLoading;
-  const summary =
-    tab === "daily" ? dayQuery.data : monthQuery.data;
+  const summary = tab === "daily" ? dayQuery.data : monthQuery.data;
 
   return (
     <div>
-      <h1 className="text-2xl font-bold">Laporan</h1>
+      <PageHeader
+        title="Laporan"
+        description={tab === "daily" ? "Ringkasan penjualan harian." : "Ringkasan penjualan bulanan + tren harian."}
+      />
       <div className="mt-3 flex items-center gap-2">
         <button
           type="button"
@@ -160,7 +131,19 @@ export function ReportsPage() {
             : "Cek koneksi dan Firestore Rules."}
         </p>
       ) : summary ? (
-        <SummaryView summary={summary} />
+        <>
+          {tab === "monthly" && (
+            <div className="mt-4">
+              <RevenueBarCard
+                title={`Tren Harian — ${month}`}
+                description="Omzet per tanggal dalam bulan berjalan."
+                data={trendQuery.data}
+                loading={trendQuery.isLoading}
+              />
+            </div>
+          )}
+          <SummaryView summary={summary} loading={loading} />
+        </>
       ) : null}
     </div>
   );

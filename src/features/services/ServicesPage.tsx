@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Pencil, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { NumberInput } from "@/components/ui/number-input";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { PageHeader, FormField, EmptyState } from "@/components/ui/shared";
@@ -178,14 +179,9 @@ export function ServicesPage() {
             </FormField>
 
             <FormField label="Tarif (Rp)">
-              <Input
-                type="number"
-                min={0}
-                placeholder="0"
+              <NumberInput
                 value={form.price}
-                onChange={(e) =>
-                  setForm({ ...form, price: Number(e.target.value) || 0 })
-                }
+                onValueChange={(n) => setForm({ ...form, price: n })}
               />
             </FormField>
 

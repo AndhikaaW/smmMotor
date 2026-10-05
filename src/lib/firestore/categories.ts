@@ -28,8 +28,12 @@ export async function listCategories(): Promise<Category[]> {
 }
 
 export async function listActiveCategories(): Promise<Category[]> {
-  const all = await listCategories();
-  return all.filter((c) => c.isActive);
+  const snap = await getDocs(
+    query(collection(db, "categories"), where("isActive", "==", true)),
+  );
+  return snap.docs
+    .map((d) => ({ id: d.id, ...(d.data() as Omit<Category, "id">) }))
+    .sort((a, b) => a.name.localeCompare(b.name, "id"));
 }
 
 export async function createCategory(input: CategoryInput) {

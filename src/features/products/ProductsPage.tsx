@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Pencil, PackageX, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { NumberInput } from "@/components/ui/number-input";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { PageHeader, FormField, EmptyState } from "@/components/ui/shared";
@@ -46,10 +47,6 @@ function emptyForm(categories: { id: string; name: string }[]): ProductInput {
   };
 }
 
-const numberOr = (value: string, fallback: number) => {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : fallback;
-};
 
 export function ProductsPage() {
   const queryClient = useQueryClient();
@@ -292,26 +289,16 @@ export function ProductsPage() {
             </FormField>
 
             <FormField label="Harga Beli (Rp)">
-              <Input
-                type="number"
-                min={0}
-                placeholder="0"
+              <NumberInput
                 value={form.purchasePrice}
-                onChange={(e) =>
-                  setForm({ ...form, purchasePrice: numberOr(e.target.value, 0) })
-                }
+                onValueChange={(n) => setForm({ ...form, purchasePrice: n })}
               />
             </FormField>
 
             <FormField label="Harga Jual (Rp)">
-              <Input
-                type="number"
-                min={0}
-                placeholder="0"
+              <NumberInput
                 value={form.sellingPrice}
-                onChange={(e) =>
-                  setForm({ ...form, sellingPrice: numberOr(e.target.value, 0) })
-                }
+                onValueChange={(n) => setForm({ ...form, sellingPrice: n })}
               />
             </FormField>
 
@@ -319,32 +306,17 @@ export function ProductsPage() {
               label="Stok Awal"
               error={editingId ? "Ubah stok via menu Stok" : undefined}
             >
-              <Input
-                type="number"
-                min={0}
-                step={1}
-                placeholder="0"
+              <NumberInput
                 value={form.stock}
                 disabled={editingId !== null}
-                onChange={(e) =>
-                  setForm({ ...form, stock: Math.floor(numberOr(e.target.value, 0)) })
-                }
+                onValueChange={(n) => setForm({ ...form, stock: n })}
               />
             </FormField>
 
             <FormField label="Stok Minimum">
-              <Input
-                type="number"
-                min={0}
-                step={1}
-                placeholder="0"
+              <NumberInput
                 value={form.minimumStock}
-                onChange={(e) =>
-                  setForm({
-                    ...form,
-                    minimumStock: Math.floor(numberOr(e.target.value, 0)),
-                  })
-                }
+                onValueChange={(n) => setForm({ ...form, minimumStock: n })}
               />
             </FormField>
 

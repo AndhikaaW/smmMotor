@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
+import { NumberInput } from "@/components/ui/number-input";
 import { useAuth } from "@/app/providers/AuthProvider";
-import { listProducts, getProductByBarcode } from "@/lib/firestore/products";
+import { getProductByBarcode, searchProductsByName } from "@/lib/firestore/products";
 import { listServices, listMechanics } from "@/lib/firestore/services";
 import { getGeneralSettings } from "@/lib/firestore/settings";
 import { checkout } from "@/lib/firestore/transactions";
@@ -32,12 +33,12 @@ const METHOD_LABEL: Record<PaymentMethod, string> = {
 export function PosPage() {
   const { appUser } = useAuth();
   const queryClient = useQueryClient();
-  const productsQuery = useQuery({ queryKey: ["products"], queryFn: listProducts });
-  const servicesQuery = useQuery({ queryKey: ["services"], queryFn: listServices });
-  const mechanicsQuery = useQuery({ queryKey: ["mechanics"], queryFn: listMechanics });
+  const servicesQuery = useQuery({ queryKey: ["services"], queryFn: listServices, staleTime: 10 * 60 * 1000 });
+  const mechanicsQuery = useQuery({ queryKey: ["mechanics"], queryFn: listMechanics, staleTime: 10 * 60 * 1000 });
   const settingsQuery = useQuery({
     queryKey: ["settings", "general"],
     queryFn: getGeneralSettings,
+    staleTime: 15 * 60 * 1000,
   });
 
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -45,20 +46,25 @@ export function PosPage() {
   const [search, setSearch] = useState("");
   const [scanError, setScanError] = useState<string | null>(null);
   const [scanReady] = useState(true);
-  const [customerName, setCustomerName] = useState("");
-  const [vehiclePlate, setVehiclePlate] = useState("");
+  const [customerName] = useState("");
+  const [vehiclePlate] = useState("");
   const [vehicleType, setVehicleType] = useState("");
   const [mechanicId, setMechanicId] = useState("");
   const [payOpen, setPayOpen] = useState(false);
   const [method, setMethod] = useState<PaymentMethod>("cash");
-  const [paid, setPaid] = useState("");
+  const [paid, setPaid] = useState(0);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [success, setSuccess] = useState<SuccessInfo | null>(null);
   const barcodeRef = useRef<HTMLInputElement>(null);
 
+  const productSearchQuery = useQuery({
+    queryKey: ["products", "pos-search", search.trim()],
+    queryFn: () => searchProductsByName(search.trim(), 24),
+    staleTime: 60 * 1000,
+  });
   const activeProducts = useMemo(
-    () => (productsQuery.data ?? []).filter((p) => p.isActive),
-    [productsQuery.data],
+    () => (productSearchQuery.data?.rows ?? []).filter((p) => p.isActive),
+    [productSearchQuery.data],
   );
   const activeServices = useMemo(
     () => (servicesQuery.data ?? []).filter((s) => s.isActive),
@@ -74,8 +80,7 @@ export function PosPage() {
     () => cart.reduce((s, i) => s + i.subtotal, 0),
     [cart],
   );
-  const paidNumber = Number(paid) || 0;
-  const changePreview = method === "cash" ? Math.max(0, paidNumber - subtotal) : 0;
+  const changePreview = method === "cash" ? Math.max(0, paid - subtotal) : 0;
 
   useEffect(() => {
     barcodeRef.current?.focus();
@@ -189,11 +194,11 @@ export function PosPage() {
       checkout({
         items: cart,
         paymentMethod: method,
-        payment: method === "cash" ? paidNumber : subtotal,
+        payment: method === "cash" ? paid : subtotal,
         cashierId: appUser?.uid ?? "",
         cashierName: appUser?.name ?? "",
-        customerName: customerName.trim(),
-        vehiclePlate: vehiclePlate.trim().toUpperCase(),
+        customerName: "",
+        vehiclePlate: "",
         vehicleType: vehicleType.trim(),
         mechanicId,
         mechanicName: activeMechanics.find((m) => m.id === mechanicId)?.name ?? "",
@@ -202,7 +207,7 @@ export function PosPage() {
       setSuccess({
         transactionNumber: res.transactionNumber,
         total: res.total,
-        payment: method === "cash" ? paidNumber : subtotal,
+        payment: method === "cash" ? paid : subtotal,
         change: res.change,
         paymentMethod: method,
         items: cart,
@@ -213,7 +218,7 @@ export function PosPage() {
       });
       setCart([]);
       setPayOpen(false);
-      setPaid("");
+      setPaid(0);
       setCheckoutError(null);
       void queryClient.invalidateQueries({ queryKey: ["products"] });
     },
@@ -222,17 +227,7 @@ export function PosPage() {
     },
   });
 
-  const searchedProducts = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return activeProducts.slice(0, 24);
-    return activeProducts
-      .filter(
-        (p) =>
-          p.name.toLowerCase().includes(q) ||
-          p.barcode.toLowerCase().includes(q),
-      )
-      .slice(0, 24);
-  }, [activeProducts, search]);
+  const searchedProducts = activeProducts;
 
   useEffect(() => {
     const size = settingsQuery.data?.paperSize ?? "80";
@@ -331,38 +326,6 @@ export function PosPage() {
 
       <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[1fr_360px]">
         <div>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <input
-              value={customerName}
-              onChange={(e) => setCustomerName(e.target.value)}
-              placeholder="Nama pelanggan (opsional)"
-              className="h-11 rounded-xl border border-border bg-surface px-4 text-sm focus:outline-2 focus:outline-primary"
-            />
-            <input
-              value={vehiclePlate}
-              onChange={(e) => setVehiclePlate(e.target.value.toUpperCase())}
-              placeholder="Plat nomor (mis. B 1234 ABC)"
-              className="h-11 rounded-xl border border-border bg-surface px-4 font-mono text-sm focus:outline-2 focus:outline-primary"
-            />
-            <input
-              value={vehicleType}
-              onChange={(e) => setVehicleType(e.target.value)}
-              placeholder="Jenis kendaraan (mis. Beat / Vario)"
-              className="h-11 rounded-xl border border-border bg-surface px-4 text-sm focus:outline-2 focus:outline-primary"
-            />
-            <select
-              value={mechanicId}
-              onChange={(e) => setMechanicId(e.target.value)}
-              className="h-11 rounded-xl border border-border bg-surface px-3 text-sm focus:outline-2 focus:outline-primary"
-            >
-              <option value="">Tanpa mekanik</option>
-              {activeMechanics.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
-          </div>
           <form onSubmit={handleScan} className="mt-3">
             <input
               ref={barcodeRef}
@@ -497,7 +460,7 @@ export function PosPage() {
             disabled={cart.length === 0}
             onClick={() => {
               setMethod(paymentMethods[0] ?? "cash");
-              setPaid(String(subtotal));
+              setPaid(subtotal);
               setCheckoutError(null);
               setPayOpen(true);
             }}
@@ -518,21 +481,63 @@ export function PosPage() {
 
       {payOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-2xl bg-surface p-6">
+          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-surface p-6">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold">Pembayaran</h2>
+              <div>
+                <h2 className="text-lg font-bold">Pembayaran</h2>
+                <p className="mt-1 text-sm text-muted">Periksa pesanan sebelum menyelesaikan transaksi.</p>
+              </div>
               <button
                 type="button"
                 onClick={() => setPayOpen(false)}
                 className="text-muted hover:text-text"
+                aria-label="Tutup pembayaran"
               >
                 ×
               </button>
             </div>
-            <p className="mt-4 text-sm text-muted">Total Pembayaran</p>
-            <p className="text-3xl font-bold">
-              Rp{subtotal.toLocaleString("id-ID")}
-            </p>
+            <div className="mt-5 grid gap-5 lg:grid-cols-[1fr_300px]">
+              <section className="min-w-0 rounded-xl border border-border p-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-semibold">Daftar pesanan</h3>
+                  <span className="text-xs text-muted">{cart.length} item</span>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {cart.map((item) => (
+                    <div
+                      key={`${item.type}-${item.productId ?? item.serviceId}`}
+                      className="flex items-center justify-between gap-3 rounded-lg bg-background px-3 py-2 text-sm"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate font-medium">{item.name}</p>
+                        <p className="text-xs text-muted">
+                          {item.type === "product" ? "Barang" : "Jasa"} • {item.quantity} × Rp{item.price.toLocaleString("id-ID")}
+                        </p>
+                      </div>
+                      <p className="shrink-0 font-semibold">Rp{item.subtotal.toLocaleString("id-ID")}</p>
+                    </div>
+                  ))}
+                </div>
+              </section>
+              <section>
+                <p className="text-sm text-muted">Total Pembayaran</p>
+                <p className="text-3xl font-bold">Rp{subtotal.toLocaleString("id-ID")}</p>
+            <label className="mt-3 block text-sm">
+              <span className="font-medium">Jenis kendaraan <span className="text-danger">*</span></span>
+              <input
+                value={vehicleType}
+                onChange={(e) => setVehicleType(e.target.value)}
+                placeholder="Contoh: Honda Beat 2022"
+                className="mt-1 h-11 w-full rounded-xl border border-border px-3 focus:outline-2 focus:outline-primary"
+              />
+            </label>
+            <label className="mt-3 block text-sm">
+              <span className="font-medium">Mekanik <span className="font-normal text-muted">(opsional)</span></span>
+              <select value={mechanicId} onChange={(e) => setMechanicId(e.target.value)} className="mt-1 h-11 w-full rounded-xl border border-border bg-surface px-3 focus:outline-2 focus:outline-primary">
+                <option value="">Pilih mekanik (opsional)</option>
+                {activeMechanics.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+              </select>
+            </label>
             <p className="mt-4 text-sm font-medium">Metode Pembayaran</p>
             <div className="mt-2 flex flex-wrap gap-2">
               {paymentMethods.map((m) => (
@@ -541,7 +546,7 @@ export function PosPage() {
                   type="button"
                   onClick={() => {
                     setMethod(m);
-                    if (m !== "cash") setPaid(String(subtotal));
+                    if (m !== "cash") setPaid(subtotal);
                   }}
                   className={
                     method === m
@@ -555,13 +560,11 @@ export function PosPage() {
             </div>
             <label className="mt-4 block text-sm">
               Jumlah Dibayar
-              <input
-                type="number"
-                min={0}
+              <NumberInput
                 value={paid}
+                onValueChange={setPaid}
                 disabled={method !== "cash"}
-                onChange={(e) => setPaid(e.target.value)}
-                className="mt-1 h-12 w-full rounded-lg border border-border px-3 text-lg disabled:bg-background"
+                className="mt-1 h-12 text-lg disabled:bg-background"
               />
             </label>
             {method === "cash" ? (
@@ -581,13 +584,16 @@ export function PosPage() {
             )}
             <Button
               className="mt-4 w-full"
-              disabled={checkoutMutation.isPending}
+              disabled={checkoutMutation.isPending || !vehicleType.trim()}
               onClick={() => checkoutMutation.mutate()}
             >
-              {checkoutMutation.isPending
-                ? "Memproses..."
-                : "PROSES TRANSAKSI"}
+              {checkoutMutation.isPending ? "Memproses..." : "PROSES TRANSAKSI"}
             </Button>
+            {!vehicleType.trim() && (
+              <p className="mt-2 text-center text-xs text-danger">Jenis kendaraan wajib diisi.</p>
+            )}
+              </section>
+            </div>
           </div>
         </div>
       )}

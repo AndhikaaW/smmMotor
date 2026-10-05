@@ -9,6 +9,7 @@ import {
   query,
   runTransaction,
   serverTimestamp,
+  startAfter,
   where,
 } from "firebase/firestore";
 import { z } from "zod";
@@ -38,7 +39,7 @@ export const checkoutSchema = z.object({
   cashierName: z.string().min(1),
   customerName: z.string().trim().max(100).optional().default(""),
   vehiclePlate: z.string().trim().max(20).optional().default(""),
-  vehicleType: z.string().trim().max(60).optional().default(""),
+  vehicleType: z.string().trim().min(1, "Jenis kendaraan wajib diisi.").max(60),
   mechanicId: z.string().trim().max(100).optional().default(""),
   mechanicName: z.string().trim().max(100).optional().default(""),
 });
@@ -210,16 +211,54 @@ export interface TransactionFilters {
   paymentMethod?: PaymentMethod | "";
   status?: "all" | "completed" | "deleted";
   pageSize?: number;
+  cursor?: unknown;
+}
+
+export interface TransactionPage {
+  rows: Transaction[];
+  lastVisible: unknown | null;
 }
 
 // Riwayat default: hanya completed. Termasuk deleted hanya bila
 // status=deleted/all — laporan masa lalu ikut berubah setelah cancel
 // (risiko A7 yang sudah disetujui user: soft-delete + exclude default).
+// Semua filter didorong ke server agar hemat read (1 nomor = 1 read,
+// bukan 50 reads lalu filter di client).
 export async function listTransactions(
   filters: TransactionFilters = {},
 ): Promise<Transaction[]> {
-  const pageSize = filters.pageSize ?? 50;
+  const page = await listTransactionPage(filters);
+  return page.rows;
+}
+
+export async function listTransactionPage(
+  filters: TransactionFilters = {},
+): Promise<TransactionPage> {
+  const pageSize = filters.pageSize ?? 25;
+  const trimmedNumber = filters.number?.trim();
+  if (trimmedNumber) {
+    const snap = await getDocs(
+      query(
+        collection(db, "transactions"),
+        where("transactionNumber", "==", trimmedNumber),
+        limit(1),
+      ),
+    );
+    return {
+      rows: snap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<Transaction, "id">),
+      })),
+      lastVisible: null,
+    };
+  }
   const clauses = [];
+  if (filters.status && filters.status !== "all") {
+    clauses.push(where("status", "==", filters.status));
+  }
+  if (filters.paymentMethod) {
+    clauses.push(where("paymentMethod", "==", filters.paymentMethod));
+  }
   if (filters.date) {
     const start = new Date(filters.date);
     start.setHours(0, 0, 0, 0);
@@ -231,23 +270,19 @@ export async function listTransactions(
     );
   }
   clauses.push(orderBy("transactionDate", "desc"));
+  if (filters.cursor) clauses.push(startAfter(filters.cursor as never));
+  clauses.push(limit(pageSize));
   const snap = await getDocs(
-    query(collection(db, "transactions"), ...clauses, limit(pageSize)),
+    query(collection(db, "transactions"), ...clauses),
   );
-  return snap.docs
-    .map((d) => ({
+  const last = snap.docs[snap.docs.length - 1];
+  return {
+    rows: snap.docs.map((d) => ({
       id: d.id,
       ...(d.data() as Omit<Transaction, "id">),
-    }))
-    .filter((t) => {
-      if (filters.status && filters.status !== "all" && t.status !== filters.status) {
-        return false;
-      }
-      if (filters.paymentMethod && t.paymentMethod !== filters.paymentMethod) {
-        return false;
-      }
-      return !filters.number || t.transactionNumber === filters.number.trim();
-    });
+    })),
+    lastVisible: last ?? null,
+  };
 }
 
 export async function deleteTransaction(
@@ -260,16 +295,8 @@ export async function deleteTransaction(
     if (!snap.exists()) throw new Error("Transaksi tidak ditemukan.");
     const data = snap.data() as Omit<Transaction, "id">;
     if (data.status !== "completed")
-      throw new Error("Hanya transaksi completed yang bisa dibatalkan.");
-    const now = Timestamp.now();
-    // Soft-delete: dokumen tetap ada, default list + laporan exclude.
-    tx.update(ref, {
-      status: "deleted",
-      deletedAt: now,
-      deletedBy: actor.userName,
-      updatedAt: now,
-    });
-    // Stok produk di item dikembalikan + movement type=return.
+      throw new Error("Hanya transaksi completed yang bisa dihapus.");
+
     const qtyByProduct = new Map<string, number>();
     for (const item of data.items) {
       if (item.type === "product" && item.productId) {
@@ -279,21 +306,46 @@ export async function deleteTransaction(
         );
       }
     }
+
+    const productSnapshots = new Map<
+      string,
+      { ref: typeof ref; qty: number; name: string; stock: number }
+    >();
     for (const [pid, qty] of qtyByProduct) {
-      const pRef = doc(db, "products", pid);
-      const pSnap = await tx.get(pRef);
-      if (!pSnap.exists()) continue;
-      const p = pSnap.data() as { stock: number; name: string };
-      const before = p.stock;
-      tx.update(pRef, { stock: before + qty, updatedAt: serverTimestamp() });
-      const movRef = doc(collection(db, "stock_movements"));
-      tx.set(movRef, {
-        productId: pid,
-        productName: p.name,
-        type: "return",
-        quantity: qty,
-        stockBefore: before,
-        stockAfter: before + qty,
+      const productRef = doc(db, "products", pid);
+      const productSnap = await tx.get(productRef);
+      if (!productSnap.exists()) continue;
+      const product = productSnap.data() as { stock: number; name: string };
+      productSnapshots.set(pid, {
+        ref: productRef,
+        qty,
+        name: product.name,
+        stock: product.stock,
+      });
+    }
+
+    const now = Timestamp.now();
+    tx.update(ref, {
+      status: "deleted",
+      deletedAt: now,
+      deletedBy: actor.userName,
+      updatedAt: now,
+    });
+
+    for (const product of productSnapshots.values()) {
+      const stockAfter = product.stock + product.qty;
+      tx.update(product.ref, {
+        stock: stockAfter,
+        updatedAt: serverTimestamp(),
+      });
+      const movementRef = doc(collection(db, "stock_movements"));
+      tx.set(movementRef, {
+        productId: product.ref.id,
+        productName: product.name,
+        type: "return" as StockMovementType,
+        quantity: product.qty,
+        stockBefore: product.stock,
+        stockAfter,
         referenceType: "transaction_delete",
         referenceId: data.transactionNumber,
         note: "",
@@ -412,4 +464,82 @@ export async function summarizeMonth(
     ),
   );
   return aggregateDocs(snap.docs);
+}
+
+export interface TrendPoint {
+  label: string;
+  revenue: number;
+  count: number;
+}
+
+export async function revenueTrendDaily(days = 14): Promise<TrendPoint[]> {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - (days - 1));
+  const snap = await getDocs(
+    query(
+      collection(db, "transactions"),
+      where("transactionDate", ">=", Timestamp.fromDate(start)),
+      orderBy("transactionDate", "asc"),
+      limit(1000),
+    ),
+  );
+  const buckets = new Map<string, TrendPoint>();
+  for (let i = 0; i < days; i++) {
+    const d = new Date(start);
+    d.setDate(d.getDate() + i);
+    const key = d.toISOString().slice(0, 10);
+    buckets.set(key, {
+      label: d.toLocaleDateString("id-ID", { day: "numeric", month: "short" }),
+      revenue: 0,
+      count: 0,
+    });
+  }
+  for (const d of snap.docs) {
+    const t = d.data() as Omit<Transaction, "id">;
+    if (t.status !== "completed") continue;
+    const ts = (t.transactionDate as unknown as { toDate?: () => Date })?.toDate?.();
+    const date = ts ?? new Date(t.transactionDate as unknown as string);
+    const key = date.toISOString().slice(0, 10);
+    const b = buckets.get(key);
+    if (!b) continue;
+    b.revenue += t.total;
+    b.count += 1;
+  }
+  return [...buckets.values()];
+}
+
+export async function revenueTrendMonthly(
+  year: number,
+  month: number,
+): Promise<TrendPoint[]> {
+  const start = new Date(year, month - 1, 1);
+  const end = new Date(year, month, 1);
+  const snap = await getDocs(
+    query(
+      collection(db, "transactions"),
+      where("transactionDate", ">=", Timestamp.fromDate(start)),
+      where("transactionDate", "<", Timestamp.fromDate(end)),
+      orderBy("transactionDate", "asc"),
+      limit(1000),
+    ),
+  );
+  const dim = new Date(year, month, 0).getDate();
+  const buckets: TrendPoint[] = Array.from({ length: dim }, (_, i) => ({
+    label: String(i + 1),
+    revenue: 0,
+    count: 0,
+  }));
+  for (const d of snap.docs) {
+    const t = d.data() as Omit<Transaction, "id">;
+    if (t.status !== "completed") continue;
+    const ts = (t.transactionDate as unknown as { toDate?: () => Date })?.toDate?.();
+    const date = ts ?? new Date(t.transactionDate as unknown as string);
+    const idx = date.getDate() - 1;
+    const b = buckets[idx];
+    if (!b) continue;
+    b.revenue += t.total;
+    b.count += 1;
+  }
+  return buckets;
 }

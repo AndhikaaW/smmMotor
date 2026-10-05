@@ -1,7 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
+import { TrendingUp, ShoppingCart, Package, AlertTriangle } from "lucide-react";
 import { useAuth } from "@/app/providers/AuthProvider";
-import { listProducts } from "@/lib/firestore/products";
-import { listTransactions, summarizeDay } from "@/lib/firestore/transactions";
+import { countLowStock } from "@/lib/firestore/products";
+import {
+  listTransactions,
+  revenueTrendDaily,
+  summarizeDay,
+} from "@/lib/firestore/transactions";
+import { PageHeader } from "@/components/ui/shared";
+import { Card, CardContent } from "@/components/ui/card";
+import { PaymentDonutCard, RevenueBarCard, TopListBarCard } from "@/components/charts/ReportCharts";
 
 export function DashboardPage() {
   const { appUser } = useAuth();
@@ -9,61 +17,93 @@ export function DashboardPage() {
   const dayQuery = useQuery({
     queryKey: ["dashboard-today", today.toDateString()],
     queryFn: () => summarizeDay(new Date()),
+    staleTime: 60 * 1000,
   });
-  const productsQuery = useQuery({
-    queryKey: ["products"],
-    queryFn: listProducts,
+  const trendQuery = useQuery({
+    queryKey: ["dashboard-trend-14d", today.toDateString()],
+    queryFn: () => revenueTrendDaily(14),
+    staleTime: 5 * 60 * 1000,
+  });
+  const lowStockQuery = useQuery({
+    queryKey: ["products", "low-stock-count"],
+    queryFn: () => countLowStock(50),
+    staleTime: 5 * 60 * 1000,
   });
   const recentQuery = useQuery({
     queryKey: ["transactions", "recent"],
     queryFn: () => listTransactions({ status: "completed", pageSize: 5 }),
+    staleTime: 60 * 1000,
   });
 
   const summary = dayQuery.data;
-  const lowStock = (productsQuery.data ?? []).filter(
-    (p) => p.isActive && p.stock <= p.minimumStock,
-  );
 
   const cards = [
     {
       label: "Omzet Hari Ini",
       value: summary ? `Rp${summary.revenue.toLocaleString("id-ID")}` : "…",
+      icon: TrendingUp,
     },
     {
       label: "Transaksi",
       value: summary ? String(summary.count) : "…",
+      icon: ShoppingCart,
     },
     {
       label: "Produk Terjual",
       value: summary ? String(summary.productQty) : "…",
+      icon: Package,
     },
     {
       label: "Stok Menipis",
-      value: productsQuery.data ? String(lowStock.length) : "…",
+      value: lowStockQuery.data != null ? String(lowStockQuery.data) : "…",
+      icon: AlertTriangle,
     },
   ];
 
   return (
     <div>
-      <h1 className="text-2xl font-bold">Dashboard</h1>
-      <p className="mt-1 text-sm text-muted">
-        Selamat datang kembali, {appUser?.name ?? "…"}.
-      </p>
+      <PageHeader
+        title="Dashboard"
+        description={`Selamat datang kembali, ${appUser?.name ?? "…"}.`}
+      />
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {cards.map((card) => (
-          <div
-            key={card.label}
-            className="rounded-xl border border-border bg-surface p-4"
-          >
-            <p className="text-xs font-medium text-muted">{card.label}</p>
-            <p className="mt-2 text-2xl font-bold">{card.value}</p>
-          </div>
+          <Card key={card.label}>
+            <CardContent className="flex items-center gap-3 p-5">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/15">
+                <card.icon className="h-5 w-5 text-primary" />
+              </span>
+              <span>
+                <p className="text-xs font-medium text-muted">{card.label}</p>
+                <p className="mt-1 text-2xl font-bold">{card.value}</p>
+              </span>
+            </CardContent>
+          </Card>
         ))}
       </div>
 
-      <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <section className="rounded-xl border border-border bg-surface p-4">
-          <h2 className="font-bold">Transaksi terbaru</h2>
+      <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3">
+        <div className="xl:col-span-2">
+          <RevenueBarCard
+            title="Omzet 14 Hari Terakhir"
+            description="Total pendapatan per hari, termasuk hari tanpa transaksi."
+            data={trendQuery.data}
+            loading={trendQuery.isLoading}
+          />
+        </div>
+        <PaymentDonutCard byPayment={summary?.byPayment} loading={dayQuery.isLoading} />
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <TopListBarCard
+          title="Produk Terlaris Hari Ini"
+          description="5 produk dengan qty tertinggi."
+          items={summary?.topProducts ?? []}
+          valueLabel="pcs"
+        />
+        <Card className="p-6">
+          <h2 className="font-semibold">Transaksi terbaru</h2>
+          <p className="text-sm text-muted">5 transaksi completed terakhir.</p>
           {recentQuery.isLoading ? (
             <p className="mt-2 text-sm text-muted">Memuat...</p>
           ) : (recentQuery.data ?? []).length === 0 ? (
@@ -80,24 +120,7 @@ export function DashboardPage() {
               ))}
             </ul>
           )}
-        </section>
-        <section className="rounded-xl border border-border bg-surface p-4">
-          <h2 className="font-bold">Produk terlaris hari ini</h2>
-          {!summary || summary.topProducts.length === 0 ? (
-            <p className="mt-2 text-sm text-muted">Belum ada penjualan.</p>
-          ) : (
-            <ol className="mt-2 space-y-1 text-sm">
-              {summary.topProducts.map((p, i) => (
-                <li key={p.name} className="flex justify-between">
-                  <span>
-                    {String(i + 1).padStart(2, "0")} {p.name}
-                  </span>
-                  <span className="font-medium">{p.qty} pcs</span>
-                </li>
-              ))}
-            </ol>
-          )}
-        </section>
+        </Card>
       </div>
     </div>
   );

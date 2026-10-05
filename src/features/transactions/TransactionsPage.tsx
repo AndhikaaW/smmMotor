@@ -1,11 +1,11 @@
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Printer, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/app/providers/AuthProvider";
 import {
   deleteTransaction,
-  listTransactions,
+  listTransactionPage,
 } from "@/lib/firestore/transactions";
 import type { PaymentMethod, Transaction } from "@/types";
 
@@ -36,15 +36,20 @@ export function TransactionsPage() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  const listQuery = useQuery({
+  const listQuery = useInfiniteQuery({
     queryKey: ["transactions", applied],
-    queryFn: () =>
-      listTransactions({
+    queryFn: ({ pageParam }) =>
+      listTransactionPage({
         date: applied.useDate ? new Date(`${applied.date}T00:00:00`) : undefined,
         number: applied.number || undefined,
         paymentMethod: (applied.method || undefined) as PaymentMethod | undefined,
         status: applied.status,
+        pageSize: 25,
+        cursor: pageParam,
       }),
+    initialPageParam: null as unknown | null,
+    getNextPageParam: (lastPage) => lastPage.lastVisible,
+    staleTime: 30 * 1000,
   });
 
   function refresh() {
@@ -72,7 +77,7 @@ export function TransactionsPage() {
     },
   });
 
-  const rows = listQuery.data ?? [];
+  const rows = (listQuery.data?.pages ?? []).flatMap((p) => p.rows);
 
   return (
     <div>
@@ -130,10 +135,11 @@ export function TransactionsPage() {
       </form>
 
       <div className="mt-4 overflow-x-auto rounded-xl border border-border bg-surface">
-        <table className="w-full min-w-[760px] text-sm">
+        <table className="w-full min-w-[900px] text-sm">
           <thead>
             <tr className="border-b border-border text-left text-xs text-muted">
               <td className="p-3">No Transaksi</td>
+              <td className="p-3">Jenis Kendaraan</td>
               <td className="p-3">Kasir</td>
               <td className="p-3 text-right">Item</td>
               <td className="p-3 text-right">Total</td>
@@ -153,6 +159,7 @@ export function TransactionsPage() {
                 }}
               >
                 <td className="p-3 font-mono text-xs">{t.transactionNumber}</td>
+                <td className="p-3 font-medium">{t.vehicleType || "-"}</td>
                 <td className="p-3">{t.cashierName}</td>
                 <td className="p-3 text-right">
                   {t.items.reduce((s, i) => s + i.quantity, 0)}
@@ -185,6 +192,17 @@ export function TransactionsPage() {
           <p className="p-4 text-sm text-muted">Tidak ada transaksi.</p>
         )}
       </div>
+      {listQuery.hasNextPage && (
+        <div className="mt-3 text-center">
+          <Button
+            variant="secondary"
+            disabled={listQuery.isFetchingNextPage}
+            onClick={() => void listQuery.fetchNextPage()}
+          >
+            {listQuery.isFetchingNextPage ? "Memuat..." : "Muat 25 lagi"}
+          </Button>
+        </div>
+      )}
 
       {selected && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
+import { NumberInput } from "@/components/ui/number-input";
 import { useAuth } from "@/app/providers/AuthProvider";
 import { listProducts } from "@/lib/firestore/products";
 import { adjustStock } from "@/lib/firestore/stock";
@@ -18,7 +19,7 @@ export function StockPage() {
   });
 
   const [productId, setProductId] = useState("");
-  const [physical, setPhysical] = useState("");
+  const [physical, setPhysical] = useState(0);
   const [reason, setReason] = useState<(typeof REASONS)[number]>("Stock opname");
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -26,7 +27,7 @@ export function StockPage() {
 
   const products = useMemo(() => productsQuery.data ?? [], [productsQuery.data]);
   const selected = products.find((p) => p.id === productId);
-  const physicalNumber = Math.floor(Number(physical));
+  const physicalNumber = physical;
   const diff = selected ? physicalNumber - selected.stock : 0;
 
   const lowStock = useMemo(
@@ -55,7 +56,7 @@ export function StockPage() {
       );
       setError(null);
       setProductId("");
-      setPhysical("");
+      setPhysical(0);
       setNote("");
       refresh();
     },
@@ -129,18 +130,15 @@ export function StockPage() {
             )}
             <label className="block">
               Stok fisik (hasil hitung)
-              <input
-                type="number"
-                min={0}
-                step={1}
+              <NumberInput
                 value={physical}
-                onChange={(e) => setPhysical(e.target.value)}
-                className="mt-1 h-10 w-full rounded-lg border border-border px-3"
+                onValueChange={setPhysical}
+                className="mt-1"
               />
             </label>
-            {selected && physical !== "" && Number.isInteger(physicalNumber) && (
+            {selected && (
               <p className={diff === 0 ? "text-muted" : "font-medium"}>
-                Selisih: {diff > 0 ? `+${diff}` : diff} → stok jadi {physicalNumber}
+                Selisih: {diff > 0 ? `+${diff.toLocaleString("id-ID")}` : diff.toLocaleString("id-ID")} → stok jadi {physicalNumber.toLocaleString("id-ID")}
               </p>
             )}
             <label className="block">

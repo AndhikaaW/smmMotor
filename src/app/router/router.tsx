@@ -18,28 +18,31 @@ function protectedElement(node: ReactNode, roles?: ("superadmin" | "admin")[]) {
   return <ProtectedRoute roles={roles}>{node}</ProtectedRoute>;
 }
 
-export const router = createBrowserRouter([
-  { path: "/login", element: <LoginPage /> },
-  {
-    path: "/",
-    element: protectedElement(<MainLayout />),
-    children: [
-      { index: true, element: <DashboardPage /> },
-      { path: "pos", element: <PosPage /> },
-      { path: "products", element: <ProductsPage /> },
-      { path: "stock", element: <StockPage /> },
-      { path: "services", element: <ServicesPage /> },
-      { path: "mechanics", element: <MechanicsPage /> },
-      { path: "transactions", element: <TransactionsPage /> },
-      { path: "reports", element: <ReportsPage /> },
-      {
-        path: "users",
-        element: protectedElement(<UsersPage />, ["superadmin"]),
-      },
-      {
-        path: "settings",
-        element: protectedElement(<SettingsPage />, ["superadmin"]),
-      },
-    ],
-  },
-]);
+export const router = createBrowserRouter(
+  [
+    { path: "/login", element: <LoginPage /> },
+    {
+      path: "/",
+      element: protectedElement(<MainLayout />),
+      children: [
+        { index: true, element: <DashboardPage /> },
+        { path: "pos", element: <PosPage /> },
+        { path: "products", element: <ProductsPage /> },
+        { path: "stock", element: <StockPage /> },
+        { path: "services", element: <ServicesPage /> },
+        { path: "mechanics", element: <MechanicsPage /> },
+        { path: "transactions", element: <TransactionsPage /> },
+        { path: "reports", element: <ReportsPage /> },
+        {
+          path: "users",
+          element: protectedElement(<UsersPage />, ["superadmin"]),
+        },
+        {
+          path: "settings",
+          element: protectedElement(<SettingsPage />, ["superadmin"]),
+        },
+      ],
+    },
+  ],
+  { basename: import.meta.env.BASE_URL },
+);
