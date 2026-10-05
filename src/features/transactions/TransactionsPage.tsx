@@ -1,0 +1,316 @@
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Printer, Trash2, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { useAuth } from "@/app/providers/AuthProvider";
+import {
+  deleteTransaction,
+  listTransactions,
+} from "@/lib/firestore/transactions";
+import type { PaymentMethod, Transaction } from "@/types";
+
+const METHODS = ["", "cash", "qris", "transfer", "debit", "other"] as const;
+const STATUSES = ["completed", "all", "deleted"] as const;
+
+function fmtDate(d: Date) {
+  return d.toISOString().slice(0, 10);
+}
+
+export function TransactionsPage() {
+  const { appUser } = useAuth();
+  const queryClient = useQueryClient();
+  const today = new Date();
+  const [date, setDate] = useState(fmtDate(today));
+  const [useDate, setUseDate] = useState(true);
+  const [number, setNumber] = useState("");
+  const [method, setMethod] = useState<(typeof METHODS)[number]>("");
+  const [status, setStatus] = useState<(typeof STATUSES)[number]>("completed");
+  const [applied, setApplied] = useState({
+    date: fmtDate(today),
+    useDate: true,
+    number: "",
+    method: "" as (typeof METHODS)[number],
+    status: "completed" as (typeof STATUSES)[number],
+  });
+  const [selected, setSelected] = useState<Transaction | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const listQuery = useQuery({
+    queryKey: ["transactions", applied],
+    queryFn: () =>
+      listTransactions({
+        date: applied.useDate ? new Date(`${applied.date}T00:00:00`) : undefined,
+        number: applied.number || undefined,
+        paymentMethod: (applied.method || undefined) as PaymentMethod | undefined,
+        status: applied.status,
+      }),
+  });
+
+  function refresh() {
+    void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+    void queryClient.invalidateQueries({ queryKey: ["products"] });
+    void queryClient.invalidateQueries({ queryKey: ["stock-movements"] });
+  }
+
+  const canDelete = appUser?.role === "superadmin" || appUser?.role === "admin";
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) =>
+      deleteTransaction(id, {
+        userId: appUser?.uid ?? "",
+        userName: appUser?.name ?? "",
+      }),
+    onSuccess: () => {
+      setConfirmDelete(false);
+      setSelected(null);
+      setDeleteError(null);
+      refresh();
+    },
+    onError: (err) => {
+      setDeleteError(err instanceof Error ? err.message : "Gagal menghapus transaksi.");
+    },
+  });
+
+  const rows = listQuery.data ?? [];
+
+  return (
+    <div>
+      <h1 className="text-2xl font-bold">Riwayat Transaksi</h1>
+
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          setApplied({ date, useDate, number, method, status });
+        }}
+        className="mt-4 flex flex-wrap items-end gap-2 rounded-xl border border-border bg-surface p-3 text-sm"
+      >
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={useDate}
+            onChange={(e) => setUseDate(e.target.checked)}
+          />
+          <input
+            type="date"
+            value={date}
+            disabled={!useDate}
+            onChange={(e) => setDate(e.target.value)}
+            className="h-10 rounded-lg border border-border px-2 disabled:opacity-50"
+          />
+        </label>
+        <input
+          value={number}
+          onChange={(e) => setNumber(e.target.value)}
+          placeholder="Nomor transaksi"
+          className="h-10 w-48 rounded-lg border border-border px-3 font-mono"
+        />
+        <select
+          value={method}
+          onChange={(e) => setMethod(e.target.value as typeof method)}
+          className="h-10 rounded-lg border border-border bg-surface px-2"
+        >
+          <option value="">Semua bayar</option>
+          {METHODS.filter(Boolean).map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+        </select>
+        <select
+          value={status}
+          onChange={(e) => setStatus(e.target.value as typeof status)}
+          className="h-10 rounded-lg border border-border bg-surface px-2"
+        >
+          <option value="completed">Completed</option>
+          <option value="all">Semua</option>
+          <option value="deleted">Deleted</option>
+        </select>
+        <Button type="submit">Filter</Button>
+      </form>
+
+      <div className="mt-4 overflow-x-auto rounded-xl border border-border bg-surface">
+        <table className="w-full min-w-[760px] text-sm">
+          <thead>
+            <tr className="border-b border-border text-left text-xs text-muted">
+              <td className="p-3">No Transaksi</td>
+              <td className="p-3">Kasir</td>
+              <td className="p-3 text-right">Item</td>
+              <td className="p-3 text-right">Total</td>
+              <td className="p-3">Bayar</td>
+              <td className="p-3">Status</td>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((t) => (
+              <tr
+                key={t.id}
+                className="cursor-pointer border-b border-border last:border-0 hover:bg-background"
+                onClick={() => {
+                  setSelected(t);
+                  setConfirmDelete(false);
+                  setDeleteError(null);
+                }}
+              >
+                <td className="p-3 font-mono text-xs">{t.transactionNumber}</td>
+                <td className="p-3">{t.cashierName}</td>
+                <td className="p-3 text-right">
+                  {t.items.reduce((s, i) => s + i.quantity, 0)}
+                </td>
+                <td className="p-3 text-right font-bold">
+                  Rp{t.total.toLocaleString("id-ID")}
+                </td>
+                <td className="p-3">{t.paymentMethod}</td>
+                <td className="p-3">
+                  <span
+                    className={
+                      t.status === "completed"
+                        ? "text-xs text-success"
+                        : "text-xs text-danger"
+                    }
+                  >
+                    {t.status}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {listQuery.isError && (
+          <p className="p-4 text-sm text-danger">
+            Gagal memuat riwayat: {listQuery.error instanceof Error ? listQuery.error.message : "Cek koneksi dan Firestore Rules."}
+          </p>
+        )}
+        {!listQuery.isLoading && !listQuery.isError && rows.length === 0 && (
+          <p className="p-4 text-sm text-muted">Tidak ada transaksi.</p>
+        )}
+      </div>
+
+      {selected && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-surface p-6">
+            <div className="flex items-center justify-between">
+              <h2 className="font-mono font-bold">{selected.transactionNumber}</h2>
+              <button
+                type="button"
+                onClick={() => setSelected(null)}
+                className="rounded-md p-1 text-muted hover:bg-background hover:text-text"
+                aria-label="Tutup detail transaksi"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <p className="mt-1 text-sm text-muted">
+              Kasir {selected.cashierName} • {selected.paymentMethod} • {selected.status}
+            </p>
+            {(selected.customerName || selected.vehiclePlate || selected.vehicleType || selected.mechanicName) && (
+              <p className="mt-1 text-sm">
+                {[selected.customerName, selected.vehiclePlate, selected.vehicleType].filter(Boolean).join(" • ")}
+                {selected.mechanicName ? ` • Mekanik: ${selected.mechanicName}` : ""}
+              </p>
+            )}
+            <table className="mt-4 w-full text-sm">
+              <tbody>
+                {selected.items.map((i) => (
+                  <tr
+                    key={`${i.type}-${i.productId ?? i.serviceId}`}
+                    className="border-b border-border last:border-0"
+                  >
+                    <td className="py-2">
+                      {i.name}
+                      <span className="block text-xs text-muted">
+                        {i.quantity} × Rp{i.price.toLocaleString("id-ID")}
+                      </span>
+                    </td>
+                    <td className="py-2 text-right font-medium">
+                      Rp{i.subtotal.toLocaleString("id-ID")}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="mt-3 space-y-1 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted">Subtotal</span>
+                <span>Rp{selected.subtotal.toLocaleString("id-ID")}</span>
+              </div>
+              <div className="flex justify-between font-bold">
+                <span>Total</span>
+                <span>Rp{selected.total.toLocaleString("id-ID")}</span>
+              </div>
+              <div className="flex justify-between text-muted">
+                <span>Bayar</span>
+                <span>Rp{selected.payment.toLocaleString("id-ID")}</span>
+              </div>
+              <div className="flex justify-between text-muted">
+                <span>Kembali</span>
+                <span>Rp{selected.change.toLocaleString("id-ID")}</span>
+              </div>
+            </div>
+
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+              <Button variant="secondary" className="flex-1" onClick={() => window.print()}>
+                <Printer className="h-4 w-4" />
+                Print Ulang
+              </Button>
+              {canDelete && selected.status === "completed" && !confirmDelete && (
+                <Button variant="destructive" className="flex-1" onClick={() => setConfirmDelete(true)}>
+                  <Trash2 className="h-4 w-4" />
+                  Hapus Transaksi
+                </Button>
+              )}
+            </div>
+            {confirmDelete && (
+              <div className="mt-4 rounded-xl border border-danger/40 bg-danger/5 p-4 text-sm">
+                <p className="font-bold">Hapus transaksi?</p>
+                <p className="mt-1 text-muted">
+                  Transaksi {selected.transactionNumber} akan dihapus dari riwayat aktif. Stok produk akan dikembalikan.
+                </p>
+                {deleteError && <p className="mt-1 text-danger">{deleteError}</p>}
+                <div className="mt-3 flex gap-2">
+                  <Button variant="secondary" className="flex-1" onClick={() => setConfirmDelete(false)}>
+                    Jangan Hapus
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    className="flex-1"
+                    disabled={deleteMutation.isPending}
+                    onClick={() => deleteMutation.mutate(selected.id)}
+                  >
+                    {deleteMutation.isPending ? "Menghapus..." : "Ya, Hapus"}
+                  </Button>
+                </div>
+              </div>
+            )}
+        <div className="print-only">
+          <p className="font-bold">Sedyo Makmur Motor</p>
+          <p>Struk Transaksi</p>
+          <p>------------------------------</p>
+          <p>{selected.transactionNumber}</p>
+          <p>Kasir: {selected.cashierName}</p>
+          {selected.customerName && <p>Pelanggan: {selected.customerName}</p>}
+          {(selected.vehiclePlate || selected.vehicleType) && (
+            <p>Kendaraan: {[selected.vehiclePlate, selected.vehicleType].filter(Boolean).join(" / ")}</p>
+          )}
+          {selected.mechanicName && <p>Mekanik: {selected.mechanicName}</p>}
+          <p>------------------------------</p>
+          {selected.items.map((item) => (
+            <div key={`${item.type}-${item.productId ?? item.serviceId}`}>
+              <p>{item.name}</p>
+              <p>{item.quantity} x Rp{item.price.toLocaleString("id-ID")} = Rp{item.subtotal.toLocaleString("id-ID")}</p>
+            </div>
+          ))}
+          <p>------------------------------</p>
+          <p>Total: Rp{selected.total.toLocaleString("id-ID")}</p>
+          <p>Bayar: Rp{selected.payment.toLocaleString("id-ID")}</p>
+          <p>Kembali: Rp{selected.change.toLocaleString("id-ID")}</p>
+          <p>Metode: {selected.paymentMethod}</p>
+          <p>------------------------------</p>
+          <p>Terima kasih atas kunjungan Anda</p>
+        </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

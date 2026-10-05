@@ -1,0 +1,142 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{db}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc(uid) {
+      return get(/databases/$(db)/documents/users/$(uid)).data;
+    }
+
+    function isActiveUser() {
+      return signedIn()
+        && exists(/databases/$(db)/documents/users/$(request.auth.uid))
+        && userDoc(request.auth.uid).isActive == true;
+    }
+
+    function isSuperadmin() {
+      return isActiveUser() && userDoc(request.auth.uid).role == 'superadmin';
+    }
+
+    // Lookup username/phone -> email untuk login & reset password.
+    // Get publik (dibutuhkan sebelum login); list DITOLAK agar tidak
+    // bisa di-enumerasi. Dokumen hanya berisi { email }.
+    match /user_lookup/{key} {
+      allow get: if true;
+      allow list: if false;
+      allow write: if isSuperadmin();
+    }
+
+    match /users/{uid} {
+      // Baca: dokumen sendiri atau superadmin.
+      allow get: if signedIn()
+        && (request.auth.uid == uid || isSuperadmin());
+      // List hanya superadmin (halaman Pengguna).
+      allow list: if isSuperadmin();
+      // Tulis hanya superadmin; role & isActive valid.
+      allow create: if isSuperadmin()
+        && request.resource.data.role in ['superadmin', 'admin']
+        && request.resource.data.isActive is bool;
+      allow update: if isSuperadmin()
+        && request.resource.data.role in ['superadmin', 'admin']
+        && request.resource.data.isActive is bool
+        // uid & email identitas tidak boleh berubah.
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.email == resource.data.email;
+      allow delete: if false;
+    }
+
+    // Master data: baca untuk semua user aktif (kasir butuh baca produk
+    // aktif di POS); tulis hanya superadmin/admin. purchasePrice tidak
+    // diekspos ke UI non-superadmin (proteksi level UI, limitasi V1).
+    match /categories/{id} {
+      allow read: if isActiveUser();
+      allow create, update: if isSuperadmin()
+        || userDoc(request.auth.uid).role == 'admin';
+      allow delete: if false;
+    }
+
+    match /products/{id} {
+      allow read: if isActiveUser();
+      allow create, update: if isActiveUser()
+        && (isSuperadmin()
+          || userDoc(request.auth.uid).role == 'admin')
+        && request.resource.data.sellingPrice >= 0
+        && request.resource.data.purchasePrice >= 0
+        && request.resource.data.stock >= 0
+        && request.resource.data.minimumStock >= 0;
+      allow delete: if false;
+    }
+
+    match /services/{id} {
+      allow read: if isActiveUser();
+      allow create, update: if isSuperadmin()
+        || userDoc(request.auth.uid).role == 'admin';
+      allow delete: if false;
+    }
+
+    match /mechanics/{id} {
+      allow read: if isActiveUser();
+      allow create, update: if isSuperadmin()
+        || userDoc(request.auth.uid).role == 'admin';
+      allow delete: if false;
+    }
+
+    match /settings/{id} {
+      allow read: if isActiveUser();
+      allow write: if isSuperadmin();
+    }
+
+    // Transaksi dibuat via client transaction atomik (stok + movements
+    // ditulis sekaligus). Tidak ada update/delete dari client — cancel
+    // = soft-delete di Phase 4, movement return dicatat di sana.
+    match /transactions/{id} {
+      allow read: if isActiveUser();
+      allow create: if isActiveUser()
+        && request.resource.data.cashierId == request.auth.uid
+        && request.resource.data.status == 'completed'
+        && request.resource.data.items.size() >= 1
+        && request.resource.data.total >= 0
+        && request.resource.data.payment >= request.resource.data.total;
+      // Cancel = soft-delete completed -> deleted. Hanya admin/superadmin.
+      // Stok + movement return ditulis atomik oleh client transaction —
+      // Rules hanya kunci transisi status & field identitas.
+      allow update: if isActiveUser()
+        && (isSuperadmin()
+          || userDoc(request.auth.uid).role == 'admin')
+        && resource.data.status == 'completed'
+        && request.resource.data.status == 'deleted'
+        && request.resource.data.transactionNumber == resource.data.transactionNumber
+        && request.resource.data.total == resource.data.total
+        && request.resource.data.cashierId == resource.data.cashierId;
+      allow delete: if false;
+    }
+
+    match /stock_movements/{id} {
+      allow read: if isActiveUser();
+      allow create: if isActiveUser()
+        && request.resource.data.productId is string
+        && request.resource.data.quantity is number
+        && request.resource.data.type in ['in', 'out', 'adjustment', 'return'];
+      allow update, delete: if false;
+    }
+
+    // Kunci unik barcode: doc ID = barcode, isi { productId }.
+    // Create-only oleh admin/superadmin (via transaction produk).
+    // Tanpa koleksi ini barcode unik hanya cek app-level (race).
+    match /barcode_keys/{barcode} {
+      allow read: if isActiveUser();
+      allow create: if isActiveUser()
+        && (isSuperadmin()
+          || userDoc(request.auth.uid).role == 'admin')
+        && request.resource.data.productId is string;
+      allow update, delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

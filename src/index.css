@@ -1,0 +1,72 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: #f8fafc;
+  --color-surface: #ffffff;
+  --color-text: #111827;
+  --color-muted: #64748b;
+  --color-border: #e2e8f0;
+  --color-primary: #f59e0b;
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --color-sidebar: #111827;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Radix animation utilities used by Dialog/Select */
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes fade-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes zoom-in-95 { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+@keyframes zoom-out-95 { from { opacity: 1; transform: scale(1); } to { opacity: 0; transform: scale(0.95); } }
+
+.data-\[state\=open\]\:animate-in[data-state="open"] { animation-duration: 150ms; animation-fill-mode: both; }
+.data-\[state\=closed\]\:animate-out[data-state="closed"] { animation-duration: 100ms; animation-fill-mode: both; }
+.data-\[state\=open\]\:fade-in-0[data-state="open"] { animation-name: fade-in; }
+.data-\[state\=closed\]\:fade-out-0[data-state="closed"] { animation-name: fade-out; }
+.data-\[state\=open\]\:zoom-in-95[data-state="open"] { animation-name: zoom-in-95; }
+.data-\[state\=closed\]\:zoom-out-95[data-state="closed"] { animation-name: zoom-out-95; }
+
+
+body {
+  background: var(--color-background);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+}
+
+/* Struk thermal: hanya .print-only yang keluar di kertas.
+ * Lebar ikut settings paperSize via class di <body>:
+ * body.paper-58 → 58mm, default/80 → 80mm. */
+.print-only {
+  display: none;
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .print-only,
+  .print-only * {
+    visibility: visible;
+  }
+  .print-only {
+    display: block;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 72mm;
+    padding: 0 2mm;
+    font-family: monospace;
+    font-size: 11px;
+    line-height: 1.4;
+    color: #000;
+    background: #fff;
+  }
+  body.paper-58 .print-only {
+    width: 52mm;
+    font-size: 10px;
+  }
+  @page {
+    margin: 0;
+  }
+}
