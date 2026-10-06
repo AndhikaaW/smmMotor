@@ -82,9 +82,7 @@ service cloud.firestore {
       allow write: if isSuperadmin();
     }
 
-    // Transaksi dibuat via client transaction atomik (stok + movements
-    // ditulis sekaligus). Tidak ada update/delete dari client — cancel
-    // = soft-delete di Phase 4, movement return dicatat di sana.
+    // Transaksi: create atomik + update atomik (cancel/edit) via client transaction.
     match /transactions/{id} {
       allow read: if isActiveUser();
       allow create: if isActiveUser()
@@ -93,17 +91,19 @@ service cloud.firestore {
         && request.resource.data.items.size() >= 1
         && request.resource.data.total >= 0
         && request.resource.data.payment >= request.resource.data.total;
-      // Cancel = soft-delete completed -> deleted. Hanya admin/superadmin.
-      // Stok + movement return ditulis atomik oleh client transaction —
-      // Rules hanya kunci transisi status & field identitas.
+      // Cancel = completed -> deleted; Edit = completed -> completed
+      // (items/total/payment boleh berubah, nomor + kasir dikunci,
+      // stok dikoreksi via movement transaction_edit).
       allow update: if isActiveUser()
         && (isSuperadmin()
           || userDoc(request.auth.uid).role == 'admin')
         && resource.data.status == 'completed'
-        && request.resource.data.status == 'deleted'
+        && request.resource.data.status in ['completed', 'deleted']
         && request.resource.data.transactionNumber == resource.data.transactionNumber
-        && request.resource.data.total == resource.data.total
-        && request.resource.data.cashierId == resource.data.cashierId;
+        && request.resource.data.cashierId == resource.data.cashierId
+        && request.resource.data.items.size() >= 1
+        && request.resource.data.total >= 0
+        && request.resource.data.payment >= request.resource.data.total;
       allow delete: if false;
     }
 

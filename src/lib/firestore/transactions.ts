@@ -41,8 +41,9 @@ export const checkoutSchema = z.object({
   vehiclePlate: z.string({ error: "Nomor plat bermasalah. Kosongkan saja ya." }).trim().max(20, "Nomor plat maksimal 20 huruf. Pendekkan ya.").optional().default(""),
   vehicleType: z.string({ error: "Jenis kendaraan belum diisi. Contoh: Beat, Avanza ya." }).trim().min(1, "Jenis kendaraan belum diisi. Contoh: Beat, Avanza ya.").max(60, "Jenis kendaraan maksimal 60 huruf. Pendekkan ya."),
 });
-
 export type CheckoutInput = z.infer<typeof checkoutSchema>;
+export const updateTransactionSchema = checkoutSchema.pick({ items: true, paymentMethod: true, payment: true });
+export type UpdateTransactionInput = z.infer<typeof updateTransactionSchema>;
 
 const NUMBER_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 
@@ -202,7 +203,7 @@ export async function getTransaction(id: string): Promise<Transaction | null> {
 }
 
 export interface TransactionFilters {
-  date?: Date;
+  date?: string;
   number?: string;
   paymentMethod?: PaymentMethod | "";
   status?: "all" | "completed" | "deleted";
@@ -256,10 +257,7 @@ export async function listTransactionPage(
     clauses.push(where("paymentMethod", "==", filters.paymentMethod));
   }
   if (filters.date) {
-    const start = new Date(filters.date);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(start);
-    end.setDate(end.getDate() + 1);
+    const { start, end } = wibDayBounds(filters.date);
     clauses.push(
       where("transactionDate", ">=", Timestamp.fromDate(start)),
       where("transactionDate", "<", Timestamp.fromDate(end)),
@@ -352,6 +350,133 @@ export async function deleteTransaction(
     }
   });
 }
+export async function updateTransaction(
+  id: string,
+  input: UpdateTransactionInput,
+  actor: { userId: string; userName: string },
+): Promise<void> {
+  const parsed = updateTransactionSchema.parse(input);
+  await runTransaction(db, async (tx) => {
+    const ref = doc(db, "transactions", id);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error("Transaksi tidak ketemu. Muat ulang ya.");
+    const data = snap.data() as Omit<Transaction, "id">;
+    if (data.status !== "completed")
+      throw new Error("Transaksi yang sudah dihapus tidak bisa diedit ya.");
+    const oldQty = new Map<string, number>();
+    for (const item of data.items) {
+      if (item.type === "product" && item.productId)
+        oldQty.set(item.productId, (oldQty.get(item.productId) ?? 0) + item.quantity);
+    }
+    const newQty = new Map<string, number>();
+    for (const item of parsed.items) {
+      if (item.type === "product" && item.productId)
+        newQty.set(item.productId, (newQty.get(item.productId) ?? 0) + item.quantity);
+    }
+    const allIds = [...new Set([...oldQty.keys(), ...newQty.keys()])];
+    const products = new Map<string, { price: number; stock: number; name: string; isActive: boolean }>();
+    for (const pid of allIds) {
+      const pSnap = await tx.get(doc(db, "products", pid));
+      if (!pSnap.exists()) {
+        if ((newQty.get(pid) ?? 0) > (oldQty.get(pid) ?? 0))
+          throw new Error("Ada produk yang sudah dihapus dari master. Kurangi/hapus itemnya ya.");
+        continue;
+      }
+      const p = pSnap.data() as { sellingPrice: number; stock: number; name: string; isActive: boolean };
+      products.set(pid, { price: p.sellingPrice, stock: p.stock, name: p.name, isActive: p.isActive });
+    }
+    const serverItems: CartItem[] = parsed.items.map((item) => {
+      if (item.type === "service") {
+        if (!item.serviceId) throw new Error("Ada jasa tidak valid. Hapus lalu tambah ulang jasanya ya.");
+        return { ...item, subtotal: item.price * item.quantity };
+      }
+      const p = products.get(item.productId as string);
+      if (!p) {
+        const old = data.items.find((o) => o.type === "product" && o.productId === item.productId);
+        const price = old?.price ?? item.price;
+        return { ...item, price, subtotal: price * item.quantity };
+      }
+      const diff = (newQty.get(item.productId as string) ?? 0) - (oldQty.get(item.productId as string) ?? 0);
+      if (diff > 0 && !p.isActive) throw new Error(`Produk ${p.name} sedang nonaktif. Kembalikan jumlahnya ya.`);
+      return { ...item, price: p.price, subtotal: p.price * item.quantity };
+    });
+    const serverTotal = serverItems.reduce((s, i) => s + i.subtotal, 0);
+    const isCash = parsed.paymentMethod === "cash";
+    if (isCash && parsed.payment < serverTotal)
+      throw new Error(`Uang cash kurang. Total Rp${serverTotal.toLocaleString("id-ID")}, bayar Rp${parsed.payment.toLocaleString("id-ID")}. Tambah uangnya ya.`);
+    if (!isCash && parsed.payment !== serverTotal)
+      throw new Error(`Pembayaran non-tunai harus pas Rp${serverTotal.toLocaleString("id-ID")}. Sesuaikan nominalnya ya.`);
+    for (const pid of allIds) {
+      const diff = (newQty.get(pid) ?? 0) - (oldQty.get(pid) ?? 0);
+      if (diff <= 0) continue;
+      const p = products.get(pid);
+      if (!p) continue;
+      if (p.stock < diff)
+        throw new Error(`Stok ${p.name} tidak cukup. Sisa ${p.stock}, butuh tambah ${diff}. Kurangi jumlahnya ya.`);
+    }
+    const now = Timestamp.now();
+    tx.update(ref, {
+      items: serverItems,
+      subtotal: serverTotal,
+      total: serverTotal,
+      payment: isCash ? parsed.payment : serverTotal,
+      change: isCash ? parsed.payment - serverTotal : 0,
+      paymentMethod: parsed.paymentMethod as PaymentMethod,
+      updatedAt: now,
+    });
+    for (const pid of allIds) {
+      const diff = (newQty.get(pid) ?? 0) - (oldQty.get(pid) ?? 0);
+      if (diff === 0) continue;
+      const p = products.get(pid);
+      if (!p) continue;
+      const before = p.stock;
+      const after = before - diff;
+      tx.update(doc(db, "products", pid), { stock: after, updatedAt: serverTimestamp() });
+      const movRef = doc(collection(db, "stock_movements"));
+      tx.set(movRef, {
+        productId: pid,
+        productName: p.name,
+        type: diff > 0 ? ("out" as StockMovementType) : ("return" as StockMovementType),
+        quantity: -diff,
+        stockBefore: before,
+        stockAfter: after,
+        referenceType: "transaction_edit",
+        referenceId: data.transactionNumber,
+        note: "",
+        userId: actor.userId,
+        userName: actor.userName,
+        createdAt: now,
+      });
+    }
+  });
+}
+
+
+// ---- Batas hari WIB (UTC+7, tanpa DST). Semua filter laporan pakai ini,
+// bukan UTC / jam browser, agar transaksi malam tetap masuk tanggal WIB.
+const WIB_MS = 7 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Tanggal WIB `YYYY-MM-DD` dari sebuah instant. */
+export function wibDateStr(now: Date = new Date()): string {
+  return new Date(now.getTime() + WIB_MS).toISOString().slice(0, 10);
+}
+
+export function wibDayBounds(dateStr: string): { start: Date; end: Date } {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  if (!y || !m || !d) throw new Error("Tanggal tidak valid. Pilih ulang tanggalnya ya.");
+  const startMs = Date.UTC(y, m - 1, d) - WIB_MS;
+  return { start: new Date(startMs), end: new Date(startMs + DAY_MS) };
+}
+
+function wibMonthBounds(year: number, month: number): { start: Date; end: Date } {
+  if (!year || !month || month < 1 || month > 12)
+    throw new Error("Bulan tidak valid. Pilih ulang bulannya ya.");
+  return {
+    start: new Date(Date.UTC(year, month - 1, 1) - WIB_MS),
+    end: new Date(Date.UTC(year, month, 1) - WIB_MS),
+  };
+}
 
 export interface DaySummary {
   revenue: number;
@@ -360,18 +485,12 @@ export interface DaySummary {
   productQty: number;
   serviceQty: number;
   productRevenue: number;
-  byPayment: Record<PaymentMethod, number>;
+  serviceRevenue: number;
   topProducts: { name: string; qty: number; revenue: number }[];
   topServices: { name: string; qty: number; revenue: number }[];
+  productRows: { name: string; qty: number; revenue: number }[];
+  serviceRows: { name: string; qty: number; revenue: number }[];
 }
-
-const EMPTY_PAYMENT: Record<PaymentMethod, number> = {
-  cash: 0,
-  qris: 0,
-  transfer: 0,
-  debit: 0,
-  other: 0,
-};
 
 export function emptySummary(): DaySummary {
   return {
@@ -381,9 +500,11 @@ export function emptySummary(): DaySummary {
     productQty: 0,
     serviceQty: 0,
     productRevenue: 0,
-    byPayment: { ...EMPTY_PAYMENT },
+    serviceRevenue: 0,
     topProducts: [],
     topServices: [],
+    productRows: [],
+    serviceRows: [],
   };
 }
 
@@ -398,7 +519,6 @@ function aggregateDocs(
     if (t.status !== "completed") continue;
     summary.revenue += t.total;
     summary.count += 1;
-    summary.byPayment[t.paymentMethod] += t.total;
     for (const item of t.items) {
       if (item.type === "product") {
         summary.productQty += item.quantity;
@@ -409,6 +529,7 @@ function aggregateDocs(
         productAgg.set(item.name, cur);
       } else {
         summary.serviceQty += item.quantity;
+        summary.serviceRevenue += item.subtotal;
         const cur = serviceAgg.get(item.name) ?? { qty: 0, revenue: 0 };
         cur.qty += item.quantity;
         cur.revenue += item.subtotal;
@@ -416,50 +537,115 @@ function aggregateDocs(
       }
     }
   }
-  summary.topProducts = [...productAgg.entries()]
+  const byQty = <T extends { qty: number }>(a: T, b: T) => b.qty - a.qty;
+  summary.productRows = [...productAgg.entries()]
     .map(([name, v]) => ({ name, ...v }))
-    .sort((a, b) => b.qty - a.qty)
-    .slice(0, 5);
-  summary.topServices = [...serviceAgg.entries()]
+    .sort(byQty);
+  summary.serviceRows = [...serviceAgg.entries()]
     .map(([name, v]) => ({ name, ...v }))
-    .sort((a, b) => b.qty - a.qty)
-    .slice(0, 5);
+    .sort(byQty);
+  summary.topProducts = summary.productRows.slice(0, 5);
+  summary.topServices = summary.serviceRows.slice(0, 5);
   return summary;
+}
+/** Semua dokumen completed dalam [start, end) — paginasi agar rentang panjang tak kepotong limit. */
+async function fetchRangeDocs(start: Date, end: Date) {
+  const docs: { data: () => unknown }[] = [];
+  let cursor: unknown = undefined;
+  for (let page = 0; page < 20; page++) {
+    const snap = await getDocs(
+      query(
+        collection(db, "transactions"),
+        where("transactionDate", ">=", Timestamp.fromDate(start)),
+        where("transactionDate", "<", Timestamp.fromDate(end)),
+        orderBy("transactionDate", "asc"),
+        ...(cursor ? [startAfter(cursor as never)] : []),
+        limit(500),
+      ),
+    );
+    docs.push(...snap.docs);
+    if (snap.docs.length < 500) break;
+    cursor = snap.docs[snap.docs.length - 1];
+  }
+  return docs;
+}
+
+function wibKeyOf(t: Omit<Transaction, "id">): string | null {
+  if (t.status !== "completed") return null;
+  const raw: unknown = t.transactionDate;
+  let instant: Date | null = null;
+  if (raw instanceof Timestamp) instant = raw.toDate();
+  else if (raw instanceof Date) instant = raw;
+  else if (typeof raw === "string" || typeof raw === "number") {
+    const d = new Date(raw);
+    if (!Number.isNaN(d.getTime())) instant = d;
+  } else if (raw !== null && typeof raw === "object" && "toDate" in raw) {
+    const toDate: unknown = raw.toDate;
+    if (typeof toDate === "function") {
+      const d = (toDate as () => Date).call(raw);
+      if (d instanceof Date && !Number.isNaN(d.getTime())) instant = d;
+    }
+  }
+  if (!instant) return null;
+  return new Date(instant.getTime() + WIB_MS).toISOString().slice(0, 10);
+}
+
+function dayKeysBetween(fromStr: string, toStr: string): string[] {
+  if (toStr < fromStr) throw new Error("Rentang tanggal terbalik. Tukar tanggal mulai & selesainya ya.");
+  const keys: string[] = [];
+  let cur = fromStr;
+  for (let i = 0; i < 62; i++) {
+    keys.push(cur);
+    if (cur === toStr) return keys;
+    const [cy, cm, cd] = cur.split("-").map(Number);
+    cur = new Date(Date.UTC(cy, cm - 1, cd) + DAY_MS).toISOString().slice(0, 10);
+  }
+  throw new Error("Rentang maksimal 62 hari. Persempit tanggalnya ya.");
 }
 
 export async function summarizeDay(date: Date): Promise<DaySummary> {
-  const start = new Date(date);
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(start);
-  end.setDate(end.getDate() + 1);
-  const snap = await getDocs(
-    query(
-      collection(db, "transactions"),
-      where("transactionDate", ">=", Timestamp.fromDate(start)),
-      where("transactionDate", "<", Timestamp.fromDate(end)),
-      orderBy("transactionDate", "desc"),
-      limit(500),
-    ),
-  );
-  return aggregateDocs(snap.docs);
+  const key = new Date(date.getTime() + WIB_MS).toISOString().slice(0, 10);
+  const { start, end } = wibDayBounds(key);
+  return aggregateDocs(await fetchRangeDocs(start, end));
 }
 
 export async function summarizeMonth(
   year: number,
   month: number,
 ): Promise<DaySummary> {
-  const start = new Date(year, month - 1, 1);
-  const end = new Date(year, month, 1);
-  const snap = await getDocs(
-    query(
-      collection(db, "transactions"),
-      where("transactionDate", ">=", Timestamp.fromDate(start)),
-      where("transactionDate", "<", Timestamp.fromDate(end)),
-      orderBy("transactionDate", "desc"),
-      limit(1000),
-    ),
+  const { start, end } = wibMonthBounds(year, month);
+  return aggregateDocs(await fetchRangeDocs(start, end));
+}
+
+export interface RangeSummary extends DaySummary {
+  from: string;
+  to: string;
+  trend: TrendPoint[];
+}
+
+/** Ringkasan rentang WIB inklusif + tren harian per tanggal WIB. Maks 62 hari. */
+export async function summarizeRange(fromStr: string, toStr: string): Promise<RangeSummary> {
+  const keys = dayKeysBetween(fromStr, toStr);
+  const { start } = wibDayBounds(fromStr);
+  const { end } = wibDayBounds(toStr);
+  const docs = await fetchRangeDocs(start, end);
+  const summary = aggregateDocs(docs);
+  const buckets = new Map<string, { label: string; revenue: number; count: number }>(
+    keys.map((k) => {
+      const [ky, km, kd] = k.split("-").map(Number);
+      const label = new Date(Date.UTC(ky, km - 1, kd, 12)).toLocaleDateString("id-ID", { day: "numeric", month: "short" });
+      return [k, { label, revenue: 0, count: 0 }] as [string, { label: string; revenue: number; count: number }];
+    }),
   );
-  return aggregateDocs(snap.docs);
+  for (const d of docs) {
+    const key = wibKeyOf(d.data() as Omit<Transaction, "id">);
+    const b = key ? buckets.get(key) : undefined;
+    if (!b) continue;
+    const t = d.data() as Omit<Transaction, "id">;
+    b.revenue += t.total;
+    b.count += 1;
+  }
+  return { ...summary, from: fromStr, to: toStr, trend: [...buckets.values()] };
 }
 
 export interface TrendPoint {
@@ -469,73 +655,20 @@ export interface TrendPoint {
 }
 
 export async function revenueTrendDaily(days = 14): Promise<TrendPoint[]> {
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
-  start.setDate(start.getDate() - (days - 1));
-  const snap = await getDocs(
-    query(
-      collection(db, "transactions"),
-      where("transactionDate", ">=", Timestamp.fromDate(start)),
-      orderBy("transactionDate", "asc"),
-      limit(1000),
-    ),
-  );
-  const buckets = new Map<string, TrendPoint>();
-  for (let i = 0; i < days; i++) {
-    const d = new Date(start);
-    d.setDate(d.getDate() + i);
-    const key = d.toISOString().slice(0, 10);
-    buckets.set(key, {
-      label: d.toLocaleDateString("id-ID", { day: "numeric", month: "short" }),
-      revenue: 0,
-      count: 0,
-    });
-  }
-  for (const d of snap.docs) {
-    const t = d.data() as Omit<Transaction, "id">;
-    if (t.status !== "completed") continue;
-    const ts = (t.transactionDate as unknown as { toDate?: () => Date })?.toDate?.();
-    const date = ts ?? new Date(t.transactionDate as unknown as string);
-    const key = date.toISOString().slice(0, 10);
-    const b = buckets.get(key);
-    if (!b) continue;
-    b.revenue += t.total;
-    b.count += 1;
-  }
-  return [...buckets.values()];
+  const toStr = wibDateStr();
+  const [ty, tm, td] = toStr.split("-").map(Number);
+  const fromStr = new Date(Date.UTC(ty, tm - 1, td) - (days - 1) * DAY_MS).toISOString().slice(0, 10);
+  const { trend } = await summarizeRange(fromStr, toStr);
+  return trend;
 }
 
 export async function revenueTrendMonthly(
   year: number,
   month: number,
 ): Promise<TrendPoint[]> {
-  const start = new Date(year, month - 1, 1);
-  const end = new Date(year, month, 1);
-  const snap = await getDocs(
-    query(
-      collection(db, "transactions"),
-      where("transactionDate", ">=", Timestamp.fromDate(start)),
-      where("transactionDate", "<", Timestamp.fromDate(end)),
-      orderBy("transactionDate", "asc"),
-      limit(1000),
-    ),
-  );
-  const dim = new Date(year, month, 0).getDate();
-  const buckets: TrendPoint[] = Array.from({ length: dim }, (_, i) => ({
-    label: String(i + 1),
-    revenue: 0,
-    count: 0,
-  }));
-  for (const d of snap.docs) {
-    const t = d.data() as Omit<Transaction, "id">;
-    if (t.status !== "completed") continue;
-    const ts = (t.transactionDate as unknown as { toDate?: () => Date })?.toDate?.();
-    const date = ts ?? new Date(t.transactionDate as unknown as string);
-    const idx = date.getDate() - 1;
-    const b = buckets[idx];
-    if (!b) continue;
-    b.revenue += t.total;
-    b.count += 1;
-  }
-  return buckets;
+  const dim = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const fromStr = `${year}-${pad(month)}-01`;
+  const { trend } = await summarizeRange(fromStr, `${year}-${pad(month)}-${pad(dim)}`);
+  return trend.map((t, i) => ({ ...t, label: String(i + 1) }));
 }

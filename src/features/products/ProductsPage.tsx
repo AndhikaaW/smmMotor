@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import { Plus, Pencil, PackageX, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -58,12 +59,17 @@ export function ProductsPage() {
   });
   const categories = useMemo(() => categoriesQuery.data ?? [], [categoriesQuery.data]);
 
-  const [search, setSearch] = useState("");
+  const [searchParams] = useSearchParams();
+  const qParam = searchParams.get("q") ?? "";
+  const [search, setSearch] = useState(qParam);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<ProductInput>(emptyForm([]));
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [stockProduct, setStockProduct] = useState<Product | null>(null);
+  useEffect(() => {
+    setSearch(qParam);
+  }, [qParam]);
 
   function refresh() {
     void queryClient.invalidateQueries({ queryKey: ["products"] });

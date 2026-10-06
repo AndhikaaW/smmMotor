@@ -143,7 +143,7 @@ export function MainLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   return (
-    <div className="flex min-h-screen w-full overflow-x-hidden bg-background">
+    <div className="flex h-screen w-full overflow-hidden bg-background">
       {/* Mobile overlay */}
       {sidebarOpen && (
         <div
@@ -162,13 +162,13 @@ export function MainLayout() {
         <SidebarContent onClose={() => setSidebarOpen(false)} />
       </aside>
 
-      {/* Desktop sidebar */}
-      <aside className="hidden lg:flex w-64 shrink-0 flex-col shadow-xl">
+      {/* Desktop sidebar — fixed penuh, tak ikut scroll konten */}
+      <aside className="hidden h-screen w-64 shrink-0 flex-col shadow-xl lg:flex lg:sticky lg:top-0">
         <SidebarContent />
       </aside>
 
       {/* Main */}
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {/* Topbar */}
         <header className="flex h-16 shrink-0 items-center justify-between border-b border-border bg-surface px-4 shadow-sm sm:px-6">
           {/* Mobile hamburger */}

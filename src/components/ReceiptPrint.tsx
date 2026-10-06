@@ -6,7 +6,9 @@ function idr(n: number): string {
   return n.toLocaleString("id-ID");
 }
 
-/** Satu-satunya template struk HTML — dipakai Kasir + Riwayat. Sama persis contoh. */
+/** Satu-satunya template struk HTML — dipakai Kasir + Riwayat.
+ * Kepala atas TANPA kode transaksi (permintaan user).
+ * Barcode bawah SATU label (displayValue JsBarcode); tanpa <p> manual. */
 export function ReceiptPrint({ d }: { d: ReceiptDataInput }) {
   const barcodeRef = useRef<SVGSVGElement>(null);
   const totalQty = d.items.reduce((s, i) => s + i.quantity, 0);
@@ -28,9 +30,8 @@ export function ReceiptPrint({ d }: { d: ReceiptDataInput }) {
 
   return (
     <div className="receipt-print">
-      <div className="receipt-top">
+      <div className="receipt-top receipt-top-single">
         <span>Tanggal {d.dateStr}</span>
-        <span className="receipt-num"># {d.shortNumber}</span>
       </div>
       <div className="receipt-hr" />
       <div className="receipt-center">
@@ -76,10 +77,8 @@ export function ReceiptPrint({ d }: { d: ReceiptDataInput }) {
           <span>{idr(d.change)}</span>
         </p>
       </div>
-      <p className="receipt-sign">Hormat kami</p>
       <div className="receipt-barcode">
         <svg ref={barcodeRef} />
-        {!d.barcodeValue && <p>{d.barcodeValue}</p>}
       </div>
       {d.footer && <p className="receipt-footer">{d.footer}</p>}
     </div>

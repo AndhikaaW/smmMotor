@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ClipboardList } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { NumberInput } from "@/components/ui/number-input";
 import {
   Dialog,
@@ -19,6 +19,8 @@ import { getGeneralSettings } from "@/lib/firestore/settings";
 import { checkout } from "@/lib/firestore/transactions";
 import { barcodeValueOf, buildReceiptText, downloadTextFile, formatReceiptDate, printTextViaBluetooth, shortNumberOf, type ReceiptDataInput } from "@/lib/receipt";
 import { ReceiptPrint } from "@/components/ReceiptPrint";
+import { BluetoothPreviewDialog } from "@/components/BluetoothPreviewDialog";
+import { loadHeldCarts, MAX_HELD, newHeldId, saveHeldCarts, type HeldCart } from "@/lib/posHeld";
 import type { CartItem, PaymentMethod, Product, ServiceItem } from "@/types";
 import { friendlyError } from "@/lib/errors";
 
@@ -55,7 +57,6 @@ export function PosPage() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [barcode, setBarcode] = useState("");
   const [search, setSearch] = useState("");
-  const [serviceSearch, setServiceSearch] = useState("");
   const [scanError, setScanError] = useState<string | null>(null);
   const [scanReady] = useState(true);
   const [customerName] = useState("");
@@ -65,10 +66,15 @@ export function PosPage() {
   const [method, setMethod] = useState<PaymentMethod>("cash");
   const [paid, setPaid] = useState(0);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const [held, setHeld] = useState<HeldCart[]>(() => loadHeldCarts());
+  const [activeHeldId, setActiveHeldId] = useState<string | null>(null);
+  const [heldOpen, setHeldOpen] = useState(false);
+  const [heldMsg, setHeldMsg] = useState<string | null>(null);
   const [success, setSuccess] = useState<SuccessInfo | null>(null);
   const barcodeRef = useRef<HTMLInputElement>(null);
   const [printMsg, setPrintMsg] = useState<string | null>(null);
   const [printing, setPrinting] = useState(false);
+  const [btPreview, setBtPreview] = useState(false);
   const [unknownBarcode, setUnknownBarcode] = useState<string | null>(null);
   const [manualOpen, setManualOpen] = useState(false);
   const [serviceOpen, setServiceOpen] = useState(false);
@@ -89,7 +95,7 @@ export function PosPage() {
     () => (servicesQuery.data ?? []).filter((s) => s.isActive),
     [servicesQuery.data],
   );
-  const q = serviceSearch.trim().toLowerCase();
+  const q = search.trim().toLowerCase();
   const filteredServices = q
     ? activeServices.filter((s) => s.name.toLowerCase().includes(q))
     : activeServices;
@@ -212,6 +218,66 @@ export function PosPage() {
       ),
     );
   }
+  function persistHeld(next: HeldCart[]) {
+    setHeld(next);
+    saveHeldCarts(next);
+  }
+
+  function holdActiveCart() {
+    if (cart.length === 0) {
+      setHeldMsg("Keranjang kosong — belum ada yang disimpan.");
+      return;
+    }
+    if (!activeHeldId && held.length >= MAX_HELD) {
+      setHeldMsg(`Keranjang tertahan penuh (maks ${MAX_HELD}). Selesaikan / hapus salah satu dulu.`);
+      return;
+    }
+    const id = activeHeldId ?? newHeldId();
+    const entry: HeldCart = {
+      id,
+      createdAt: held.find((h) => h.id === id)?.createdAt ?? Date.now(),
+      vehicleType: vehicleType.trim(),
+      method,
+      items: cart,
+    };
+    const exists = held.some((h) => h.id === id);
+    persistHeld(exists ? held.map((h) => (h.id === id ? entry : h)) : [...held, entry]);
+    setCart([]);
+    setVehicleType("");
+    setPaid(0);
+    setPayOpen(false);
+    setActiveHeldId(null);
+    setCheckoutError(null);
+    setHeldMsg("Disimpan. Lanjutkan kapan saja dari ikon antrean di samping kolom scan.");
+    barcodeRef.current?.focus();
+  }
+
+  function resumeHeld(id: string) {
+    const target = held.find((h) => h.id === id);
+    if (!target || id === activeHeldId) return;
+    let next = held;
+    if (cart.length > 0 && next.length < MAX_HELD && !activeHeldId) {
+      next = [...next, { id: newHeldId(), createdAt: Date.now(), vehicleType: vehicleType.trim(), method, items: cart }];
+    }
+    if (cart.length > 0 && activeHeldId) {
+      next = next.map((h) => (h.id === activeHeldId ? { ...h, items: cart, vehicleType: vehicleType.trim(), method } : h));
+    }
+    persistHeld(next);
+    setCart(target.items);
+    setVehicleType(target.vehicleType);
+    setMethod(target.method);
+    setPaid(target.items.reduce((s, i) => s + i.subtotal, 0));
+    setActiveHeldId(target.id);
+    setCheckoutError(null);
+    setHeldMsg(`Melanjutkan keranjang (${target.items.length} item). Tambah lagi / PROSES bila sudah pas.`);
+    barcodeRef.current?.focus();
+  }
+
+  function deleteHeld(id: string) {
+    persistHeld(held.filter((h) => h.id !== id));
+    if (activeHeldId === id) setActiveHeldId(null);
+    setHeldMsg("Keranjang tertahan dihapus.");
+  }
 
   function openPriceEditProduct(p: Product) {
     setPriceProduct(p);
@@ -299,6 +365,16 @@ export function PosPage() {
         vehicleType: vehicleType.trim(),
       });
       setCart([]);
+      if (activeHeldId) {
+        const doneId = activeHeldId;
+        setHeld((prev) => {
+          const next = prev.filter((h) => h.id !== doneId);
+          saveHeldCarts(next);
+          return next;
+        });
+        setActiveHeldId(null);
+        setHeldMsg("Transaksi dari keranjang tersimpan ke database. Stok berkurang.");
+      }
       setPayOpen(false);
       setPaid(0);
       setCheckoutError(null);
@@ -357,10 +433,15 @@ export function PosPage() {
   }
 
   async function bluetoothReceipt() {
+    const d = receiptData();
+    if (!d) {
+      setPrintMsg("Data struk belum siap. Coba lagi ya.");
+      return;
+    }
     setPrinting(true);
     setPrintMsg(null);
     try {
-      await printTextViaBluetooth(receiptText());
+      await printTextViaBluetooth(d);
       setPrintMsg("Terkirim ke printer Bluetooth.");
     } catch (err) {
       setPrintMsg(friendlyError(err, "Gagal cetak via Bluetooth. Pakai tombol Salin lalu cetak dari RawBT ya."));
@@ -394,7 +475,7 @@ export function PosPage() {
           <Button variant="secondary" onClick={printReceipt}>
             Cetak Struk
           </Button>
-          <Button variant="secondary" disabled={printing} onClick={() => void bluetoothReceipt()}>
+          <Button variant="secondary" disabled={printing} onClick={() => { setPrintMsg(null); setBtPreview(true); }}>
             {printing ? "Mengirim..." : "Bluetooth"}
           </Button>
           <Button variant="secondary" onClick={() => void copyReceipt()}>
@@ -415,6 +496,16 @@ export function PosPage() {
           </Button>
         </div>
         {printMsg && <p className="mt-2 text-xs text-muted">{printMsg}</p>}
+        <BluetoothPreviewDialog
+          open={btPreview}
+          title="Preview Struk Bluetooth"
+          data={receiptData()}
+          text={receiptText()}
+          printing={printing}
+          printMsg={printMsg}
+          onClose={() => setBtPreview(false)}
+          onConfirm={() => void bluetoothReceipt()}
+        />
         <div className="print-only mt-6">
           {receiptData() && <ReceiptPrint d={receiptData()!} />}
         </div>
@@ -431,30 +522,50 @@ export function PosPage() {
 
       <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[1fr_360px]">
         <div>
-          <form onSubmit={handleScan} className="mt-3">
-            <input
-              ref={barcodeRef}
-              value={barcode}
-              onChange={(e) => setBarcode(e.target.value)}
-              placeholder="🔎 Scan barcode atau cari produk..."
-              className="h-12 w-full rounded-xl border border-border bg-surface px-4 text-sm focus:outline-2 focus:outline-primary"
-            />
-          </form>
+          <div className="mt-3 flex items-stretch gap-2">
+            <form onSubmit={handleScan} className="min-w-0 flex-1">
+              <input
+                ref={barcodeRef}
+                value={barcode}
+                onChange={(e) => setBarcode(e.target.value)}
+                placeholder="🔎 Scan barcode atau cari produk..."
+                className="h-12 w-full rounded-xl border border-border bg-surface px-4 text-sm focus:outline-2 focus:outline-primary"
+              />
+            </form>
+            <button
+              type="button"
+              title={held.length > 0 ? `Antrean (${held.length}) — klik untuk lihat` : "Antrean — kosong"}
+              onClick={() => setHeldOpen(true)}
+              className="relative h-12 w-12 shrink-0 rounded-xl border border-border bg-surface text-muted transition-colors hover:border-primary hover:text-text"
+            >
+              <ClipboardList className="mx-auto h-5 w-5" />
+              {held.length > 0 && (
+                <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1 text-[11px] font-bold text-gray-900">
+                  {held.length}
+                </span>
+              )}
+            </button>
+          </div>
           <p className="mt-1 text-xs text-muted">
             Scanner siap {scanReady ? "●" : "○"} • F2 fokus • F4 bayar • F8
             clear
           </p>
           {scanError && <p className="mt-1 text-sm text-danger">{scanError}</p>}
-          <div className="mt-3 flex gap-2">
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Cari produk manual..."
-              className="h-10 w-full max-w-sm rounded-lg border border-border bg-surface px-3 text-sm"
+              placeholder="Cari produk / jasa..."
+              className="h-10 w-full rounded-lg border border-border bg-surface px-3 text-sm"
             />
-            <Button variant="secondary" onClick={() => setManualOpen(true)}>
-              + Tambah
-            </Button>
+            <div className="flex shrink-0 gap-2">
+              <Button variant="secondary" onClick={() => setManualOpen(true)}>
+                + Tambah Produk
+              </Button>
+              <Button variant="secondary" onClick={() => setServiceOpen(true)}>
+                + Tambah Jasa
+              </Button>
+            </div>
           </div>
           <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
             {searchedProducts.map((p) => (
@@ -468,38 +579,27 @@ export function PosPage() {
                 }}
                 className="cursor-pointer rounded-xl border border-border bg-surface p-3 text-left hover:border-primary"
               >
-                <p className="truncate text-sm font-medium">{p.name}</p>
-                <p className="text-sm font-bold">
-                  Rp{p.sellingPrice.toLocaleString("id-ID")}
+                <p className="truncate text-sm font-medium">{p.name} - Rp{p.sellingPrice.toLocaleString("id-ID")}</p>
+                <p className="mt-0.5 flex items-center justify-between text-xs text-muted">
+                  <span>Stok: {p.stock}</span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openPriceEditProduct(p);
+                    }}
+                    className="hover:text-text hover:underline"
+                    title="Edit harga"
+                  >
+                    ✏️
+                  </button>
                 </p>
-                <p className="text-xs text-muted">Stok: {p.stock}</p>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    openPriceEditProduct(p);
-                  }}
-                  className="mt-1 text-xs text-muted hover:text-text hover:underline"
-                >
-                  ✏️ Edit harga
-                </button>
               </div>
             ))}
           </div>
 
-          <div className="mt-6 flex flex-wrap items-center justify-between gap-2">
+          <div className="mt-6">
             <h2 className="font-bold">Jasa</h2>
-            <Button variant="secondary" size="sm" onClick={() => setServiceOpen(true)}>
-              + Tambah Jasa
-            </Button>
-          </div>
-          <div className="mt-2 flex gap-2">
-            <Input
-              value={serviceSearch}
-              onChange={(e) => setServiceSearch(e.target.value)}
-              placeholder="Cari jasa..."
-              className="h-10 w-full max-w-sm"
-            />
           </div>
           {filteredServices.length === 0 ? (
             <p className="mt-2 text-sm text-muted">Jasa tidak ketemu. Klik + Tambah Jasa ya.</p>
@@ -541,7 +641,7 @@ export function PosPage() {
               Belum ada item. Scan barcode untuk mulai.
             </p>
           ) : (
-            <ul className="mt-3 space-y-3">
+            <ul className="mt-3 max-h-[42vh] space-y-3 overflow-y-auto pr-1">
               {cart.map((item, idx) => (
                 <li
                   key={`${item.type}-${item.productId ?? item.serviceId}`}
@@ -611,7 +711,7 @@ export function PosPage() {
             className="mt-3 h-14 w-full text-base"
             disabled={cart.length === 0}
             onClick={() => {
-              setMethod(paymentMethods[0] ?? "cash");
+              setMethod((prev) => (paymentMethods.includes(prev) ? prev : (paymentMethods[0] ?? "cash")));
               setPaid(subtotal);
               setCheckoutError(null);
               setPayOpen(true);
@@ -630,6 +730,44 @@ export function PosPage() {
           )}
         </aside>
       </div>
+
+      <Dialog open={heldOpen} onOpenChange={setHeldOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Keranjang Tertahan ({held.length}/{MAX_HELD})</DialogTitle>
+          </DialogHeader>
+          <p className="text-xs text-muted">Tersimpan lokal — belum ke database, stok belum berkurang. Klik Lanjut untuk edit / proses.</p>
+          {heldMsg && <p className="mt-1 text-xs text-success">{heldMsg}</p>}
+          {held.length === 0 ? (
+            <p className="mt-3 text-sm text-muted">Belum ada keranjang tertahan.</p>
+          ) : (
+            <ul className="mt-3 grid max-h-[60vh] grid-cols-1 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
+              {held.map((h) => {
+                const total = h.items.reduce((s, i) => s + i.subtotal, 0);
+                const active = h.id === activeHeldId;
+                return (
+                  <li key={h.id} className={`rounded-lg border p-3 text-sm ${active ? "border-primary" : "border-border"}`}>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="font-semibold">{h.items.length} item • Rp{total.toLocaleString("id-ID")}</p>
+                      <span className="text-xs text-muted">{new Date(h.createdAt).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}</span>
+                    </div>
+                    <p className="mt-1 truncate text-xs text-muted">{h.vehicleType || "Kendaraan belum diisi"} • {METHOD_LABEL[h.method]}</p>
+                    <p className="mt-1 truncate text-xs text-muted">{h.items.slice(0, 3).map((i) => i.name).join(", ")}{h.items.length > 3 ? "…" : ""}</p>
+                    <div className="mt-2 flex gap-2">
+                      <Button size="sm" className="flex-1" disabled={active} onClick={() => { resumeHeld(h.id); setHeldOpen(false); }}>
+                        {active ? "Aktif" : "Lanjut"}
+                      </Button>
+                      <Button size="sm" variant="secondary" onClick={() => deleteHeld(h.id)}>
+                        Hapus
+                      </Button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {payOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -734,8 +872,19 @@ export function PosPage() {
             >
               {checkoutMutation.isPending ? "Memproses..." : "PROSES TRANSAKSI"}
             </Button>
+            <Button
+              variant="secondary"
+              className="mt-2 w-full"
+              disabled={checkoutMutation.isPending || cart.length === 0}
+              onClick={holdActiveCart}
+            >
+              SIMPAN KE KERANJANG
+            </Button>
+            <p className="mt-2 text-center text-xs text-muted">
+              Disimpan lokal (belum ke database & stok belum berkurang).
+            </p>
             {!vehicleType.trim() && (
-              <p className="mt-2 text-center text-xs text-danger">Jenis kendaraan wajib diisi.</p>
+              <p className="mt-1 text-center text-xs text-danger">Jenis kendaraan wajib diisi untuk proses — simpan keranjang boleh tanpa itu.</p>
             )}
               </section>
             </div>

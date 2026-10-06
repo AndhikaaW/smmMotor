@@ -2,9 +2,6 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  Cell,
-  Pie,
-  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -68,67 +65,6 @@ export function RevenueBarCard({
   );
 }
 
-export function PaymentDonutCard({
-  byPayment,
-  loading,
-}: {
-  byPayment: Record<string, number> | undefined;
-  loading: boolean;
-}) {
-  const data = Object.entries(byPayment ?? {})
-    .map(([name, value]) => ({ name, value }))
-    .filter((d) => d.value > 0);
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Metode Pembayaran</CardTitle>
-        <CardDescription>Komposisi omzet per metode bayar.</CardDescription>
-      </CardHeader>
-      <CardContent>
-        {loading ? (
-          <ChartEmpty label="Memuat grafik..." />
-        ) : data.length === 0 ? (
-          <ChartEmpty />
-        ) : (
-          <div className="flex flex-col items-center gap-4 sm:flex-row">
-            <ChartContainer className="h-[200px] sm:w-1/2">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Tooltip
-                    contentStyle={tooltipStyle}
-                    formatter={((value: unknown) => [
-                      `Rp${Number(value ?? 0).toLocaleString("id-ID")}`,
-                      "Omzet",
-                    ]) as never}
-                  />
-                  <Pie data={data} dataKey="value" nameKey="name" innerRadius={52} outerRadius={80} paddingAngle={3} strokeWidth={0}>
-                    {data.map((_, i) => (
-                      <Cell key={i} fill={chartColors.pie[i % chartColors.pie.length]} />
-                    ))}
-                  </Pie>
-                </PieChart>
-              </ResponsiveContainer>
-            </ChartContainer>
-            <ul className="w-full space-y-2 text-sm sm:w-1/2">
-              {data.map((d, i) => (
-                <li key={d.name} className="flex items-center justify-between gap-2">
-                  <span className="flex items-center gap-2 text-muted">
-                    <span
-                      className="h-2.5 w-2.5 rounded-full"
-                      style={{ background: chartColors.pie[i % chartColors.pie.length] }}
-                    />
-                    {d.name}
-                  </span>
-                  <span className="font-medium">Rp{d.value.toLocaleString("id-ID")}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
 
 export function TopListBarCard({
   title,

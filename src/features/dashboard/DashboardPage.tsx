@@ -135,7 +135,7 @@ function LowStockCard({
   items,
   loading,
 }: {
-  items: { id: string; name: string; stock: number; minimumStock: number }[] | undefined;
+  items: { id: string; name: string; barcode?: string; stock: number; minimumStock: number }[] | undefined;
   loading: boolean;
 }) {
   const sorted = useMemo(
@@ -146,7 +146,7 @@ function LowStockCard({
     <Card>
       <CardHeader>
         <CardTitle>Stok Menipis</CardTitle>
-        <CardDescription>Stok {"<="} minimum — klik untuk restok.</CardDescription>
+        <CardDescription>Stok {"<="} minimum — klik untuk cari di Produk.</CardDescription>
       </CardHeader>
       <CardContent>
         {loading ? (
@@ -157,7 +157,7 @@ function LowStockCard({
           <ul className="divide-y divide-border text-sm">
             {sorted.map((p) => (
               <li key={p.id} className="py-2">
-                <Link to="/stock" className="flex items-center justify-between gap-2 hover:underline">
+                <Link to={`/products?q=${encodeURIComponent(p.name)}`} className="flex items-center justify-between gap-2 hover:underline">
                   <span className="min-w-0 truncate font-medium">{p.name}</span>
                   <span className="shrink-0 font-mono text-xs text-danger">
                     {p.stock} / min {p.minimumStock}
@@ -168,7 +168,7 @@ function LowStockCard({
           </ul>
         )}
         {(items?.length ?? 0) > 8 && (
-          <Link to="/stock" className="mt-2 inline-block text-xs text-muted hover:underline">
+          <Link to="/products" className="mt-2 inline-block text-xs text-muted hover:underline">
             Lihat semua {(items?.length ?? 0)} produk →
           </Link>
         )}
