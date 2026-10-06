@@ -21,16 +21,16 @@ import { auth, db, firebaseApp } from "@/lib/firebase/client";
 import type { AppUser, UserRole } from "@/types";
 
 export const userFormSchema = z.object({
-  name: z.string().trim().min(2, "Nama minimal 2 karakter"),
+  name: z.string({ error: "Nama belum diisi. Minimal 2 huruf ya." }).trim().min(2, "Nama minimal 2 huruf. Tambah lagi ya."),
   username: z
-    .string()
+    .string({ error: "Username belum diisi. Minimal 3 karakter ya." })
     .trim()
-    .min(3, "Username minimal 3 karakter")
-    .regex(/^[a-zA-Z0-9._-]+$/, "Hanya huruf, angka, titik, _ dan -"),
-  email: z.string().trim().toLowerCase().email("Email tidak valid"),
-  phone: z.string().trim().min(9, "No HP tidak valid"),
-  password: z.string().min(6, "Password minimal 6 karakter").optional(),
-  role: z.enum(["superadmin", "admin"]),
+    .min(3, "Username minimal 3 karakter. Tambah lagi ya.")
+    .regex(/^[a-zA-Z0-9._-]+$/, "Username hanya boleh huruf, angka, titik, garis bawah, dan setrip ya."),
+  email: z.string({ error: "Email belum diisi. Isi dulu ya." }).trim().toLowerCase().email("Email tidak valid. Periksa ketikannya ya."),
+  phone: z.string({ error: "No HP belum diisi. Isi dulu ya." }).trim().min(9, "No HP tidak valid. Periksa ketikannya ya."),
+  password: z.string({ error: "Password bermasalah. Minimal 6 karakter ya." }).min(6, "Password minimal 6 karakter. Tambah lagi ya.").optional(),
+  role: z.enum(["superadmin", "admin"], { error: "Peran belum dipilih. Pilih dulu ya." }),
 });
 
 export type UserFormInput = z.infer<typeof userFormSchema>;
@@ -44,12 +44,12 @@ async function ensureUnique(
     query(collection(db, "users"), where(field, "==", value), limit(2)),
   );
   if (snap.docs.some((d) => d.id !== exceptUid))
-    throw new Error(`${field} sudah dipakai.`);
+    throw new Error(`${field === "username" ? "Username" : field === "email" ? "Email" : "No HP"} sudah dipakai user lain. Pakai yang lain ya.`);
 }
 
 export async function createManagedUser(input: UserFormInput) {
   const parsed = userFormSchema.parse(input);
-  if (!parsed.password) throw new Error("Password wajib untuk user baru.");
+  if (!parsed.password) throw new Error("Password wajib diisi untuk user baru. Minimal 6 karakter ya.");
 
   await ensureUnique("username", parsed.username);
   await ensureUnique("email", parsed.email);

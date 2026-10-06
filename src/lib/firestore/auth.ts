@@ -7,11 +7,11 @@ import { Timestamp, doc, getDoc } from "firebase/firestore";
 import { z } from "zod";
 import { auth, db } from "@/lib/firebase/client";
 
-export const identifierSchema = z.string().trim().min(3, "Minimal 3 karakter");
+export const identifierSchema = z.string({ error: "Username / email / no HP belum diisi. Isi dulu ya." }).trim().min(3, "Username / email / no HP minimal 3 karakter. Tambah lagi ya.");
 
 export const loginSchema = z.object({
   identifier: identifierSchema,
-  password: z.string().min(1, "Password wajib diisi"),
+  password: z.string({ error: "Password wajib diisi. Isi dulu ya." }).min(1, "Password wajib diisi. Isi dulu ya."),
 });
 
 export type LoginInput = z.infer<typeof loginSchema>;
@@ -39,7 +39,7 @@ async function resolveEmail(identifier: string): Promise<string | null> {
 export async function signInWithIdentifier(input: LoginInput) {
   const parsed = loginSchema.parse(input);
   const email = await resolveEmail(parsed.identifier);
-  if (!email) throw new Error("Akun tidak ditemukan.");
+  if (!email) throw new Error("Akun tidak ketemu. Cek ketikan username / email / no HP ya.");
   const cred = await signInWithEmailAndPassword(auth, email, parsed.password);
   return cred.user;
 }
@@ -47,7 +47,7 @@ export async function signInWithIdentifier(input: LoginInput) {
 export async function sendResetForIdentifier(identifier: string) {
   const id = identifierSchema.parse(identifier);
   const email = await resolveEmail(id);
-  if (!email) throw new Error("Akun tidak ditemukan.");
+  if (!email) throw new Error("Akun tidak ketemu. Cek ketikan username / email / no HP ya.");
   await sendPasswordResetEmail(auth, email);
 }
 

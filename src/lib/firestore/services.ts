@@ -10,21 +10,15 @@ import {
 } from "firebase/firestore";
 import { z } from "zod";
 import { db } from "@/lib/firebase/client";
-import type { Mechanic, ServiceItem } from "@/types";
+import type { ServiceItem } from "@/types";
 
 export const serviceSchema = z.object({
-  name: z.string().trim().min(2, "Nama minimal 2 karakter"),
-  price: z.number().min(0, "Harga >= 0"),
-  description: z.string().trim().default(""),
+  name: z.string({ error: "Nama jasa belum diisi. Minimal 2 huruf ya." }).trim().min(2, "Nama jasa minimal 2 huruf. Tambah lagi ya."),
+  price: z.number({ error: "Harga jasa belum diisi. Isi angkanya ya." }).min(0, "Harga jasa tidak boleh kurang dari 0 ya."),
+  description: z.string({ error: "Keterangan jasa bermasalah. Kosongkan saja ya." }).trim().default(""),
 });
 
 export type ServiceInput = z.infer<typeof serviceSchema>;
-
-export const mechanicSchema = z.object({
-  name: z.string().trim().min(2, "Nama minimal 2 karakter"),
-});
-
-export type MechanicInput = z.infer<typeof mechanicSchema>;
 
 export async function listServices(): Promise<ServiceItem[]> {
   const snap = await getDocs(
@@ -36,14 +30,15 @@ export async function listServices(): Promise<ServiceItem[]> {
   }));
 }
 
-export async function createService(input: ServiceInput) {
+export async function createService(input: ServiceInput): Promise<{ id: string }> {
   const parsed = serviceSchema.parse(input);
-  await addDoc(collection(db, "services"), {
+  const ref = await addDoc(collection(db, "services"), {
     ...parsed,
     isActive: true,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
+  return { id: ref.id };
 }
 
 export async function updateService(id: string, input: ServiceInput) {
@@ -61,37 +56,3 @@ export async function setServiceActive(id: string, isActive: boolean) {
   });
 }
 
-export async function listMechanics(): Promise<Mechanic[]> {
-  const snap = await getDocs(
-    query(collection(db, "mechanics"), orderBy("name")),
-  );
-  return snap.docs.map((d) => ({
-    id: d.id,
-    ...(d.data() as Omit<Mechanic, "id">),
-  }));
-}
-
-export async function createMechanic(input: MechanicInput) {
-  const parsed = mechanicSchema.parse(input);
-  await addDoc(collection(db, "mechanics"), {
-    name: parsed.name,
-    isActive: true,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  });
-}
-
-export async function renameMechanic(id: string, name: string) {
-  const parsed = mechanicSchema.parse({ name });
-  await updateDoc(doc(db, "mechanics", id), {
-    name: parsed.name,
-    updatedAt: serverTimestamp(),
-  });
-}
-
-export async function setMechanicActive(id: string, isActive: boolean) {
-  await updateDoc(doc(db, "mechanics", id), {
-    isActive,
-    updatedAt: serverTimestamp(),
-  });
-}

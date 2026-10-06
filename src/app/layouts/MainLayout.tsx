@@ -7,7 +7,6 @@ import {
   Tags,
   Layers,
   Wrench,
-  Users2,
   Receipt,
   BarChart2,
   Users,
@@ -37,7 +36,6 @@ const SECTIONS: {
       { to: "/categories", label: "Kategori", icon: Tags },
       { to: "/stock", label: "Stok", icon: Layers },
       { to: "/services", label: "Jasa", icon: Wrench },
-      { to: "/mechanics", label: "Mekanik", icon: Users2 },
     ],
   },
   {

@@ -1,15 +1,17 @@
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { TrendingUp, ShoppingCart, Package, AlertTriangle } from "lucide-react";
 import { useAuth } from "@/app/providers/AuthProvider";
-import { countLowStock } from "@/lib/firestore/products";
+import { listLowStock } from "@/lib/firestore/products";
 import {
   listTransactions,
   revenueTrendDaily,
   summarizeDay,
 } from "@/lib/firestore/transactions";
 import { PageHeader } from "@/components/ui/shared";
-import { Card, CardContent } from "@/components/ui/card";
-import { PaymentDonutCard, RevenueBarCard, TopListBarCard } from "@/components/charts/ReportCharts";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { RevenueBarCard, TopListBarCard } from "@/components/charts/ReportCharts";
 
 export function DashboardPage() {
   const { appUser } = useAuth();
@@ -25,8 +27,8 @@ export function DashboardPage() {
     staleTime: 5 * 60 * 1000,
   });
   const lowStockQuery = useQuery({
-    queryKey: ["products", "low-stock-count"],
-    queryFn: () => countLowStock(50),
+    queryKey: ["products", "low-stock"],
+    queryFn: () => listLowStock(50),
     staleTime: 5 * 60 * 1000,
   });
   const recentQuery = useQuery({
@@ -55,7 +57,7 @@ export function DashboardPage() {
     },
     {
       label: "Stok Menipis",
-      value: lowStockQuery.data != null ? String(lowStockQuery.data) : "…",
+      value: lowStockQuery.data != null ? String(lowStockQuery.data.length) : "…",
       icon: AlertTriangle,
     },
   ];
@@ -91,7 +93,10 @@ export function DashboardPage() {
             loading={trendQuery.isLoading}
           />
         </div>
-        <PaymentDonutCard byPayment={summary?.byPayment} loading={dayQuery.isLoading} />
+        <LowStockCard
+          items={lowStockQuery.data}
+          loading={lowStockQuery.isLoading}
+        />
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -123,5 +128,51 @@ export function DashboardPage() {
         </Card>
       </div>
     </div>
+  );
+}
+
+function LowStockCard({
+  items,
+  loading,
+}: {
+  items: { id: string; name: string; stock: number; minimumStock: number }[] | undefined;
+  loading: boolean;
+}) {
+  const sorted = useMemo(
+    () => [...(items ?? [])].sort((a, b) => a.stock - b.stock).slice(0, 8),
+    [items],
+  );
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Stok Menipis</CardTitle>
+        <CardDescription>Stok {"<="} minimum — klik untuk restok.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <p className="text-sm text-muted">Memuat...</p>
+        ) : sorted.length === 0 ? (
+          <p className="text-sm text-muted">Semua stok aman.</p>
+        ) : (
+          <ul className="divide-y divide-border text-sm">
+            {sorted.map((p) => (
+              <li key={p.id} className="py-2">
+                <Link to="/stock" className="flex items-center justify-between gap-2 hover:underline">
+                  <span className="min-w-0 truncate font-medium">{p.name}</span>
+                  <span className="shrink-0 font-mono text-xs text-danger">
+                    {p.stock} / min {p.minimumStock}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+        {(items?.length ?? 0) > 8 && (
+          <Link to="/stock" className="mt-2 inline-block text-xs text-muted hover:underline">
+            Lihat semua {(items?.length ?? 0)} produk →
+          </Link>
+        )}
+      </CardContent>
+    </Card>
   );
 }

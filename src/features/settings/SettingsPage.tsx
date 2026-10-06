@@ -21,6 +21,7 @@ import {
 import type { PaymentMethod } from "@/types";
 import { generalSettingsSeed } from "@/lib/firestore/settingsSeed";
 
+import { friendlyError } from "@/lib/errors";
 const METHODS: { value: PaymentMethod; label: string }[] = [
   { value: "cash", label: "Cash" },
   { value: "qris", label: "QRIS" },
@@ -39,7 +40,7 @@ export function SettingsPage() {
 
   const [form, setForm] = useState<SettingsInput>({
     ...generalSettingsSeed,
-    paperSize: "80",
+    paperSize: (generalSettingsSeed.paperSize ?? "80") as "58" | "80",
     paymentMethods: [...generalSettingsSeed.paymentMethods] as PaymentMethod[],
   });
   const [saved, setSaved] = useState(false);
@@ -51,6 +52,7 @@ export function SettingsPage() {
         storeName: settingsQuery.data.storeName,
         address: settingsQuery.data.address ?? "",
         phone: settingsQuery.data.phone ?? "",
+        email: settingsQuery.data.email ?? "",
         receiptHeader: settingsQuery.data.receiptHeader ?? "",
         receiptFooter: settingsQuery.data.receiptFooter ?? "",
         paperSize: settingsQuery.data.paperSize ?? "80",
@@ -69,7 +71,7 @@ export function SettingsPage() {
       void queryClient.invalidateQueries({ queryKey: ["settings"] });
     },
     onError: (err) => {
-      setErrorMsg(err instanceof Error ? err.message : "Gagal menyimpan.");
+      setErrorMsg(friendlyError(err, "Gagal menyimpan pengaturan. Coba lagi ya."));
     },
   });
 
@@ -121,6 +123,13 @@ export function SettingsPage() {
               <Input
                 value={form.phone}
                 onChange={(e) => setForm({ ...form, phone: e.target.value })}
+              />
+            </FormField>
+            <FormField label="Email (tampil di struk)">
+              <Input
+                value={form.email}
+                onChange={(e) => setForm({ ...form, email: e.target.value })}
+                placeholder="contoh@bengkel.com"
               />
             </FormField>
           </CardContent>

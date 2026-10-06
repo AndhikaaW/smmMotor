@@ -5,6 +5,7 @@ import type { DaySummary } from "@/lib/firestore/transactions";
 import { PageHeader } from "@/components/ui/shared";
 import { Card, CardContent } from "@/components/ui/card";
 import { PaymentDonutCard, RevenueBarCard, TopListBarCard } from "@/components/charts/ReportCharts";
+import { friendlyError } from "@/lib/errors";
 
 function SummaryView({ summary, loading }: { summary: DaySummary | undefined; loading: boolean }) {
   const statCards = [
@@ -126,9 +127,7 @@ export function ReportsPage() {
         <p className="mt-4 text-sm text-muted">Menghitung...</p>
       ) : (tab === "daily" ? dayQuery.isError : monthQuery.isError) ? (
         <p className="mt-4 rounded-xl border border-danger/30 bg-danger/5 p-4 text-sm text-danger">
-          Gagal memuat laporan: {(tab === "daily" ? dayQuery.error : monthQuery.error) instanceof Error
-            ? (tab === "daily" ? dayQuery.error : monthQuery.error)?.message
-            : "Cek koneksi dan Firestore Rules."}
+          {friendlyError(tab === "daily" ? dayQuery.error : monthQuery.error, "Gagal memuat laporan. Cek koneksi lalu muat ulang ya.")}
         </p>
       ) : summary ? (
         <>

@@ -77,13 +77,6 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    match /mechanics/{id} {
-      allow read: if isActiveUser();
-      allow create, update: if isSuperadmin()
-        || userDoc(request.auth.uid).role == 'admin';
-      allow delete: if false;
-    }
-
     match /settings/{id} {
       allow read: if isActiveUser();
       allow write: if isSuperadmin();

@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/app/providers/AuthProvider";
 import { sendResetForIdentifier, signInWithIdentifier } from "@/lib/firestore/auth";
+import { friendlyError } from "@/lib/errors";
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -35,7 +36,7 @@ export function LoginPage() {
         setInfo("Link reset dikirim ke email akun tersebut.");
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Gagal. Coba lagi.");
+      setError(friendlyError(err, mode === "login" ? "Gagal masuk. Cek username / password lalu coba lagi ya." : "Gagal mengirim link reset. Cek username / email / no HP lalu coba lagi ya."));
     } finally {
       setBusy(false);
     }

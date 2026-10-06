@@ -34,11 +34,106 @@ body {
   font-family: var(--font-sans);
 }
 
-/* Struk thermal: hanya .print-only yang keluar di kertas.
- * Lebar ikut settings paperSize via class di <body>:
- * body.paper-58 → 58mm, default/80 → 80mm. */
+/* Struk thermal — disamakan contoh user. ATURAN KERAS: 58mm & 80mm
+ * template SAMA PERSIS, hanya lebar kertas beda (52mm vs 72mm).
+ * Hanya .print-only yang keluar di kertas. */
 .print-only {
   display: none;
+}
+.receipt-print {
+  font-family: monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #000;
+  background: #fff;
+}
+.receipt-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.receipt-num {
+  font-weight: 700;
+  font-size: 15px;
+}
+.receipt-hr {
+  border-top: 1px solid #000;
+  margin: 4px 0;
+}
+.receipt-hr-double {
+  border-top: 3px double #000;
+  margin: 4px 0;
+}
+.receipt-center {
+  text-align: center;
+}
+.receipt-logo {
+  width: 56px;
+  height: auto;
+  margin: 2px auto;
+}
+.receipt-store {
+  font-weight: 700;
+}
+.receipt-center p {
+  margin: 0;
+}
+.receipt-cust {
+  margin: 6px 0 0;
+  word-break: break-word;
+}
+.receipt-items {
+  display: flex;
+  flex-direction: column;
+}
+.receipt-item {
+  border-bottom: 1px solid #ddd;
+  padding: 3px 0;
+}
+.receipt-item:last-child {
+  border-bottom: 0;
+}
+.receipt-item-name {
+  margin: 0;
+  font-weight: 700;
+}
+.receipt-item-row {
+  margin: 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.receipt-totals {
+  text-align: right;
+}
+.receipt-totals p {
+  margin: 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.receipt-total-line {
+  font-weight: 700;
+  font-size: 14px;
+}
+.receipt-sign {
+  margin: 10px 0 0;
+  text-align: right;
+  font-weight: 700;
+  text-decoration: underline;
+}
+.receipt-barcode {
+  margin: 90px 0 0;
+  text-align: center;
+}
+.receipt-barcode svg {
+  max-width: 100%;
+  height: auto;
+}
+.receipt-footer {
+  margin: 8px 0 0;
+  word-break: break-word;
 }
 
 @media print {
@@ -56,15 +151,15 @@ body {
     top: 0;
     width: 72mm;
     padding: 0 2mm;
-    font-family: monospace;
-    font-size: 11px;
-    line-height: 1.4;
     color: #000;
     background: #fff;
   }
   body.paper-58 .print-only {
     width: 52mm;
-    font-size: 10px;
+  }
+  .print-only img {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
   @page {
     margin: 0;

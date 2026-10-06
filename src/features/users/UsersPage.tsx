@@ -36,6 +36,7 @@ import {
   type UserFormInput,
 } from "@/lib/firestore/users";
 import type { AppUser } from "@/types";
+import { friendlyError } from "@/lib/errors";
 
 async function listUsers(): Promise<AppUser[]> {
   const snap = await getDocs(
@@ -74,7 +75,7 @@ export function UsersPage() {
       refresh();
     },
     onError: (err) => {
-      setFormError(err instanceof Error ? err.message : "Gagal membuat user.");
+      setFormError(friendlyError(err, "Gagal menyimpan user. Coba lagi ya."));
     },
   });
 
@@ -94,7 +95,7 @@ export function UsersPage() {
     e.preventDefault();
     const parsed = userFormSchema.safeParse(form);
     if (!parsed.success) {
-      setFormError(parsed.error.issues[0]?.message ?? "Input tidak valid.");
+      setFormError(parsed.error.issues[0]?.message ?? "Cek lagi isian form ya.");
       return;
     }
     createMutation.mutate(parsed.data);
@@ -190,7 +191,7 @@ export function UsersPage() {
 
         {usersQuery.isError && (
           <div className="p-6 text-center text-sm text-danger">
-            Gagal memuat. Cek koneksi / Rules.
+            {friendlyError(usersQuery.error, "Gagal memuat pengguna. Cek koneksi lalu muat ulang ya.")}
           </div>
         )}
 

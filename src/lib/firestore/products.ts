@@ -16,15 +16,15 @@ import { db } from "@/lib/firebase/client";
 import type { Product } from "@/types";
 
 export const productSchema = z.object({
-  barcode: z.string().trim().min(1, "Barcode wajib diisi"),
-  name: z.string().trim().min(2, "Nama minimal 2 karakter"),
-  categoryId: z.string().min(1, "Kategori wajib dipilih"),
-  categoryName: z.string().trim().min(1),
-  purchasePrice: z.number().min(0, "Harga beli >= 0"),
-  sellingPrice: z.number().min(0, "Harga jual >= 0"),
-  stock: z.number().int().min(0, "Stok >= 0"),
-  minimumStock: z.number().int().min(0, "Stok minimum >= 0"),
-  unit: z.string().trim().min(1, "Satuan wajib diisi"),
+  barcode: z.string({ error: "Barcode belum diisi. Scan atau tekan Auto ya." }).trim().min(1, "Barcode belum diisi. Scan atau tekan Auto ya."),
+  name: z.string({ error: "Nama produk belum diisi. Isi dulu ya." }).trim().min(2, "Nama produk minimal 2 huruf. Tambah lagi ya."),
+  categoryId: z.string({ error: "Kategori belum dipilih. Pilih dulu ya." }).min(1, "Kategori belum dipilih. Pilih dulu ya."),
+  categoryName: z.string({ error: "Nama kategori belum kebaca. Pilih ulang kategorinya ya." }).trim().min(1, "Nama kategori belum kebaca. Pilih ulang kategorinya ya."),
+  purchasePrice: z.number({ error: "Harga beli belum diisi. Isi angkanya ya." }).min(0, "Harga beli tidak boleh kurang dari 0 ya."),
+  sellingPrice: z.number({ error: "Harga jual belum diisi. Isi angkanya ya." }).min(0, "Harga jual tidak boleh kurang dari 0 ya."),
+  stock: z.number({ error: "Stok belum diisi. Isi angkanya ya." }).int("Stok harus bilangan bulat ya.").min(0, "Stok tidak boleh kurang dari 0 ya."),
+  minimumStock: z.number({ error: "Stok minimum belum diisi. Isi angkanya ya." }).int("Stok minimum harus bilangan bulat ya.").min(0, "Stok minimum tidak boleh kurang dari 0 ya."),
+  unit: z.string({ error: "Satuan belum diisi. Contoh: pcs, botol ya." }).trim().min(1, "Satuan belum diisi. Contoh: pcs, botol ya."),
 });
 
 export type ProductInput = z.infer<typeof productSchema>;
@@ -65,6 +65,16 @@ export async function countLowStock(sampleSize = 200): Promise<number> {
     if (p.isActive && p.stock <= p.minimumStock) count += 1;
   }
   return count;
+}
+
+/** Daftar produk stok <= minimum — untuk card Stok Menipis di dashboard. */
+export async function listLowStock(sampleSize = 200): Promise<Product[]> {
+  const snap = await getDocs(
+    query(collection(db, "products"), orderBy("name"), limit(sampleSize)),
+  );
+  return snap.docs
+    .map((d) => normalizeProduct(d.id, d.data() as RawDoc))
+    .filter((p) => p.isActive && p.stock <= p.minimumStock);
 }
 
 export async function getProductByBarcode(barcode: string): Promise<Product | null> {
@@ -116,7 +126,7 @@ export async function createProduct(input: ProductInput) {
   await runTransaction(db, async (tx) => {
     const keyRef = doc(db, "barcode_keys", parsed.barcode);
     const keySnap = await tx.get(keyRef);
-    if (keySnap.exists()) throw new Error("Barcode sudah dipakai produk lain.");
+    if (keySnap.exists()) throw new Error(`Barcode ${parsed.barcode} sudah dipakai produk lain. Tekan Auto atau scan ulang ya.`);
     const prodRef = doc(collection(db, "products"));
     tx.set(prodRef, {
       ...parsed,
@@ -153,16 +163,16 @@ export async function updateProduct(id: string, input: ProductInput) {
     query(collection(db, "products"), where("barcode", "==", parsed.barcode), limit(1)),
   );
   if (current.docs.some((d) => d.id !== id))
-    throw new Error("Barcode sudah dipakai produk lain.");
+    throw new Error(`Barcode ${parsed.barcode} sudah dipakai produk lain. Tekan Auto atau scan ulang ya.`);
   await runTransaction(db, async (tx) => {
     const prodSnap = await tx.get(doc(db, "products", id));
-    if (!prodSnap.exists()) throw new Error("Produk tidak ditemukan.");
+    if (!prodSnap.exists()) throw new Error("Produk tidak ketemu. Muat ulang, mungkin sudah dihapus ya.");
     const oldBarcode = (prodSnap.data() as { barcode: string }).barcode;
     if (oldBarcode !== parsed.barcode) {
       const keyRef = doc(db, "barcode_keys", parsed.barcode);
       const keySnap = await tx.get(keyRef);
       if (keySnap.exists())
-        throw new Error("Barcode sudah dipakai produk lain.");
+        throw new Error(`Barcode ${parsed.barcode} sudah dipakai produk lain. Tekan Auto atau scan ulang ya.`);
       tx.set(keyRef, { productId: id, createdAt: serverTimestamp() });
     }
     tx.update(doc(db, "products", id), {

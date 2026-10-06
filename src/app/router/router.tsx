@@ -8,7 +8,6 @@ import { UsersPage } from "@/features/users/UsersPage";
 import { ProductsPage } from "@/features/products/ProductsPage";
 import { CategoriesPage } from "@/features/categories/CategoriesPage";
 import { ServicesPage } from "@/features/services/ServicesPage";
-import { MechanicsPage } from "@/features/mechanics/MechanicsPage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
 import { PosPage } from "@/features/pos/PosPage";
 import { StockPage } from "@/features/stock/StockPage";
@@ -32,7 +31,6 @@ export const router = createBrowserRouter(
         { path: "categories", element: <CategoriesPage /> },
         { path: "stock", element: <StockPage /> },
         { path: "services", element: <ServicesPage /> },
-        { path: "mechanics", element: <MechanicsPage /> },
         { path: "transactions", element: <TransactionsPage /> },
         { path: "reports", element: <ReportsPage /> },
         {

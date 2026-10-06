@@ -22,26 +22,24 @@ import type {
 } from "@/types";
 
 export const cartItemSchema = z.object({
-  type: z.enum(["product", "service"]),
-  productId: z.string().optional(),
-  serviceId: z.string().optional(),
-  name: z.string().min(1),
-  price: z.number().min(0),
-  quantity: z.number().int().min(1),
-  subtotal: z.number().min(0),
+  type: z.enum(["product", "service"], { error: "Jenis item bermasalah. Hapus lalu tambah ulang ya." }),
+  productId: z.string({ error: "Pilih produk dulu ya." }).optional(),
+  serviceId: z.string({ error: "Pilih jasa dulu ya." }).optional(),
+  name: z.string({ error: "Nama item belum diisi. Hapus lalu tambah ulang ya." }).min(1, "Nama item belum diisi. Hapus lalu tambah ulang ya."),
+  price: z.number({ error: "Harga item bermasalah. Hapus lalu tambah ulang ya." }).min(0, "Harga item tidak boleh kurang dari 0 ya."),
+  quantity: z.number({ error: "Jumlah item bermasalah. Hapus lalu tambah ulang ya." }).int("Jumlah harus bilangan bulat ya.").min(1, "Jumlah minimal 1. Tambah lagi ya."),
+  subtotal: z.number({ error: "Subtotal bermasalah. Hapus lalu tambah ulang ya." }).min(0, "Subtotal tidak boleh kurang dari 0 ya."),
 });
 
 export const checkoutSchema = z.object({
-  items: z.array(cartItemSchema).min(1, "Keranjang kosong."),
-  paymentMethod: z.enum(["cash", "qris", "transfer", "debit", "other"]),
-  payment: z.number().min(0),
-  cashierId: z.string().min(1),
-  cashierName: z.string().min(1),
-  customerName: z.string().trim().max(100).optional().default(""),
-  vehiclePlate: z.string().trim().max(20).optional().default(""),
-  vehicleType: z.string().trim().min(1, "Jenis kendaraan wajib diisi.").max(60),
-  mechanicId: z.string().trim().max(100).optional().default(""),
-  mechanicName: z.string().trim().max(100).optional().default(""),
+  items: z.array(cartItemSchema).min(1, "Keranjang masih kosong. Tambah produk atau jasa dulu ya."),
+  paymentMethod: z.enum(["cash", "qris", "transfer", "debit", "other"], { error: "Metode bayar belum dipilih. Pilih dulu ya." }),
+  payment: z.number({ error: "Nominal bayar belum diisi. Isi angkanya ya." }).min(0, "Nominal bayar tidak boleh kurang dari 0 ya."),
+  cashierId: z.string({ error: "Sesi kasir bermasalah. Login ulang ya." }).min(1, "Sesi kasir bermasalah. Login ulang ya."),
+  cashierName: z.string({ error: "Nama kasir belum kebaca. Login ulang ya." }).min(1, "Nama kasir belum kebaca. Login ulang ya."),
+  customerName: z.string({ error: "Nama pelanggan bermasalah. Kosongkan saja ya." }).trim().max(100, "Nama pelanggan maksimal 100 huruf. Pendekkan ya.").optional().default(""),
+  vehiclePlate: z.string({ error: "Nomor plat bermasalah. Kosongkan saja ya." }).trim().max(20, "Nomor plat maksimal 20 huruf. Pendekkan ya.").optional().default(""),
+  vehicleType: z.string({ error: "Jenis kendaraan belum diisi. Contoh: Beat, Avanza ya." }).trim().min(1, "Jenis kendaraan belum diisi. Contoh: Beat, Avanza ya.").max(60, "Jenis kendaraan maksimal 60 huruf. Pendekkan ya."),
 });
 
 export type CheckoutInput = z.infer<typeof checkoutSchema>;
@@ -93,9 +91,9 @@ export async function checkout(input: CheckoutInput): Promise<CheckoutResult> {
   const total = subtotal; // V1: tanpa diskon (A2).
   const isCash = parsed.paymentMethod === "cash";
   if (isCash && parsed.payment < total)
-    throw new Error("Uang cash kurang dari total.");
+    throw new Error(`Uang cash kurang. Total Rp${total.toLocaleString("id-ID")}, bayar Rp${parsed.payment.toLocaleString("id-ID")}. Tambah uangnya ya.`);
   if (!isCash && parsed.payment !== total)
-    throw new Error("Non-cash wajib uang pas.");
+    throw new Error(`Pembayaran non-tunai harus pas Rp${total.toLocaleString("id-ID")}. Sesuaikan nominalnya ya.`);
   const change = isCash ? parsed.payment - total : 0;
 
   const transactionNumber = await generateUniqueNumber();
@@ -115,9 +113,9 @@ export async function checkout(input: CheckoutInput): Promise<CheckoutResult> {
     const productDocs = new Map<string, { price: number; stock: number; name: string }>();
     for (const pid of productIds) {
       const snap = await tx.get(doc(db, "products", pid));
-      if (!snap.exists()) throw new Error("Produk tidak ditemukan.");
+      if (!snap.exists()) throw new Error("Produk tidak ketemu. Muat ulang, mungkin sudah dihapus ya.");
       const data = snap.data() as { sellingPrice: number; stock: number; name: string; isActive: boolean };
-      if (!data.isActive) throw new Error(`Produk ${data.name} nonaktif.`);
+      if (!data.isActive) throw new Error(`Produk ${data.name} sedang nonaktif. Aktifkan di Data Produk ya.`);
       productDocs.set(pid, { price: data.sellingPrice, stock: data.stock, name: data.name });
     }
 
@@ -125,11 +123,11 @@ export async function checkout(input: CheckoutInput): Promise<CheckoutResult> {
     const qtyByProduct = new Map<string, number>();
     const serverItems: CartItem[] = parsed.items.map((item) => {
       if (item.type === "service") {
-        if (!item.serviceId) throw new Error("Item jasa tidak valid.");
+        if (!item.serviceId) throw new Error("Ada jasa tidak valid. Hapus lalu tambah ulang jasanya ya.");
         return { ...item, subtotal: item.price * item.quantity };
       }
       const p = productDocs.get(item.productId as string);
-      if (!p) throw new Error("Produk tidak ditemukan.");
+      if (!p) throw new Error("Produk tidak ketemu. Muat ulang, mungkin sudah dihapus ya.");
       qtyByProduct.set(
         item.productId as string,
         (qtyByProduct.get(item.productId as string) ?? 0) + item.quantity,
@@ -140,10 +138,10 @@ export async function checkout(input: CheckoutInput): Promise<CheckoutResult> {
     const serverSubtotal = serverItems.reduce((s, i) => s + i.subtotal, 0);
     for (const [pid, qty] of qtyByProduct) {
       const p = productDocs.get(pid);
-      if (!p) throw new Error("Produk tidak ditemukan.");
+      if (!p) throw new Error("Produk tidak ketemu. Muat ulang, mungkin sudah dihapus ya.");
       if (p.stock < qty)
         throw new Error(
-          `Stok ${p.name} hanya tersisa ${p.stock}. Diminta: ${qty}.`,
+          `Stok ${p.name} tidak cukup. Sisa ${p.stock}, diminta ${qty}. Kurangi jumlahnya ya.`,
         );
     }
 
@@ -156,8 +154,6 @@ export async function checkout(input: CheckoutInput): Promise<CheckoutResult> {
       customerName: parsed.customerName ?? "",
       vehiclePlate: parsed.vehiclePlate ?? "",
       vehicleType: parsed.vehicleType ?? "",
-      mechanicId: parsed.mechanicId ?? "",
-      mechanicName: parsed.mechanicName ?? "",
       items: serverItems,
       subtotal: serverSubtotal,
       total: serverSubtotal,
@@ -292,10 +288,10 @@ export async function deleteTransaction(
   await runTransaction(db, async (tx) => {
     const ref = doc(db, "transactions", id);
     const snap = await tx.get(ref);
-    if (!snap.exists()) throw new Error("Transaksi tidak ditemukan.");
+    if (!snap.exists()) throw new Error("Transaksi tidak ketemu. Mungkin sudah dihapus ya.");
     const data = snap.data() as Omit<Transaction, "id">;
     if (data.status !== "completed")
-      throw new Error("Hanya transaksi completed yang bisa dihapus.");
+      throw new Error("Transaksi ini sudah dihapus. Muat ulang ya.");
 
     const qtyByProduct = new Map<string, number>();
     for (const item of data.items) {

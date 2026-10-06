@@ -7,9 +7,12 @@ import {
   deleteTransaction,
   listTransactionPage,
 } from "@/lib/firestore/transactions";
-import { buildReceiptText, downloadTextFile, printTextViaBluetooth } from "@/lib/receipt";
+import { barcodeValueOf, buildReceiptText, downloadTextFile, formatReceiptDate, printTextViaBluetooth, shortNumberOf, type ReceiptDataInput } from "@/lib/receipt";
+import { ReceiptPrint } from "@/components/ReceiptPrint";
 import { getGeneralSettings } from "@/lib/firestore/settings";
 import type { PaymentMethod, Transaction } from "@/types";
+import { friendlyError } from "@/lib/errors";
+
 const METHODS = ["", "cash", "qris", "transfer", "debit", "other"] as const;
 const STATUSES = ["completed", "all", "deleted"] as const;
 
@@ -40,25 +43,26 @@ export function TransactionsPage() {
   const [printing, setPrinting] = useState(false);
   const settingsQuery = useQuery({ queryKey: ["settings", "general"], queryFn: getGeneralSettings, staleTime: 15 * 60 * 1000 });
 
-  function selectedReceiptText(t: Transaction): string {
-    return buildReceiptText({
-      header: settingsQuery.data?.receiptHeader ?? "Sedyo Makmur Motor",
-      address: settingsQuery.data?.address,
-      phone: settingsQuery.data?.phone,
-      transactionNumber: t.transactionNumber,
-      dateStr: t.transactionDate.toDate().toLocaleString("id-ID"),
-      cashierName: t.cashierName,
-      customerName: t.customerName,
-      vehiclePlate: t.vehiclePlate,
-      vehicleType: t.vehicleType,
-      mechanicName: t.mechanicName,
+  function selectedReceiptData(t: Transaction): ReceiptDataInput {
+    return {
+      storeName: settingsQuery.data?.receiptHeader ?? settingsQuery.data?.storeName ?? "sedyo makmur motor",
+      address: settingsQuery.data?.address || undefined,
+      email: settingsQuery.data?.email || undefined,
+      phone: settingsQuery.data?.phone || undefined,
+      dateStr: formatReceiptDate(t.transactionDate.toDate()),
+      shortNumber: shortNumberOf(t.transactionNumber),
+      barcodeValue: barcodeValueOf(t.transactionNumber),
+      customerLine: t.vehicleType || t.customerName,
       items: t.items,
       total: t.total,
       payment: t.payment,
       change: t.change,
-      paymentMethod: t.paymentMethod,
-      footer: settingsQuery.data?.receiptFooter ?? "Terima kasih atas kunjungan Anda",
-    });
+      footer: settingsQuery.data?.receiptFooter || undefined,
+    };
+  }
+
+  function selectedReceiptText(t: Transaction): string {
+    return buildReceiptText(selectedReceiptData(t));
   }
 
   async function bluetoothReprint(t: Transaction) {
@@ -68,7 +72,7 @@ export function TransactionsPage() {
       await printTextViaBluetooth(selectedReceiptText(t));
       setPrintMsg("Terkirim ke printer Bluetooth.");
     } catch (err) {
-      setPrintMsg(err instanceof Error ? err.message : "Bluetooth gagal.");
+      setPrintMsg(friendlyError(err, "Gagal cetak via Bluetooth. Pakai tombol Salin lalu cetak dari RawBT ya."));
     } finally {
       setPrinting(false);
     }
@@ -111,7 +115,7 @@ export function TransactionsPage() {
       refresh();
     },
     onError: (err) => {
-      setDeleteError(err instanceof Error ? err.message : "Gagal menghapus transaksi.");
+      setDeleteError(friendlyError(err, "Gagal menghapus transaksi. Coba lagi ya."));
     },
   });
 
@@ -223,7 +227,7 @@ export function TransactionsPage() {
         </table>
         {listQuery.isError && (
           <p className="p-4 text-sm text-danger">
-            Gagal memuat riwayat: {listQuery.error instanceof Error ? listQuery.error.message : "Cek koneksi dan Firestore Rules."}
+            {friendlyError(listQuery.error, "Gagal memuat riwayat. Cek koneksi lalu muat ulang ya.")}
           </p>
         )}
         {!listQuery.isLoading && !listQuery.isError && rows.length === 0 && (
@@ -259,10 +263,9 @@ export function TransactionsPage() {
             <p className="mt-1 text-sm text-muted">
               Kasir {selected.cashierName} • {selected.paymentMethod} • {selected.status}
             </p>
-            {(selected.customerName || selected.vehiclePlate || selected.vehicleType || selected.mechanicName) && (
+            {(selected.customerName || selected.vehiclePlate || selected.vehicleType) && (
               <p className="mt-1 text-sm">
                 {[selected.customerName, selected.vehiclePlate, selected.vehicleType].filter(Boolean).join(" • ")}
-                {selected.mechanicName ? ` • Mekanik: ${selected.mechanicName}` : ""}
               </p>
             )}
             <table className="mt-4 w-full text-sm">
@@ -357,31 +360,7 @@ export function TransactionsPage() {
               </div>
             )}
         <div className="print-only">
-          <p className="font-bold">{settingsQuery.data?.receiptHeader ?? "Sedyo Makmur Motor"}</p>
-          {settingsQuery.data?.address && <p>{settingsQuery.data.address}</p>}
-          {settingsQuery.data?.phone && <p>{settingsQuery.data.phone}</p>}
-          <p>------------------------------</p>
-          <p>{selected.transactionNumber}</p>
-          <p>Kasir: {selected.cashierName}</p>
-          {selected.customerName && <p>Pelanggan: {selected.customerName}</p>}
-          {(selected.vehiclePlate || selected.vehicleType) && (
-            <p>Kendaraan: {[selected.vehiclePlate, selected.vehicleType].filter(Boolean).join(" / ")}</p>
-          )}
-          {selected.mechanicName && <p>Mekanik: {selected.mechanicName}</p>}
-          <p>------------------------------</p>
-          {selected.items.map((item) => (
-            <div key={`${item.type}-${item.productId ?? item.serviceId}`}>
-              <p>{item.name}</p>
-              <p>{item.quantity} x Rp{item.price.toLocaleString("id-ID")} = Rp{item.subtotal.toLocaleString("id-ID")}</p>
-            </div>
-          ))}
-          <p>------------------------------</p>
-          <p>Total: Rp{selected.total.toLocaleString("id-ID")}</p>
-          <p>Bayar: Rp{selected.payment.toLocaleString("id-ID")}</p>
-          <p>Kembali: Rp{selected.change.toLocaleString("id-ID")}</p>
-          <p>Metode: {selected.paymentMethod}</p>
-          <p>------------------------------</p>
-          <p>{settingsQuery.data?.receiptFooter ?? "Terima kasih atas kunjungan Anda"}</p>
+          <ReceiptPrint d={selectedReceiptData(selected)} />
         </div>
           </div>
         </div>

@@ -15,7 +15,7 @@ import { db } from "@/lib/firebase/client";
 import type { Category } from "@/types";
 
 export const categorySchema = z.object({
-  name: z.string().trim().min(2, "Nama minimal 2 karakter"),
+  name: z.string({ error: "Nama kategori belum diisi. Minimal 2 huruf ya." }).trim().min(2, "Nama kategori minimal 2 huruf. Tambah lagi ya."),
 });
 
 export type CategoryInput = z.infer<typeof categorySchema>;
@@ -41,7 +41,7 @@ export async function createCategory(input: CategoryInput) {
   const dup = await getDocs(
     query(collection(db, "categories"), where("name", "==", parsed.name), limit(1)),
   );
-  if (!dup.empty) throw new Error("Kategori sudah ada.");
+  if (!dup.empty) throw new Error(`Kategori "${parsed.name}" sudah ada. Pakai nama lain ya.`);
   await addDoc(collection(db, "categories"), {
     name: parsed.name,
     isActive: true,

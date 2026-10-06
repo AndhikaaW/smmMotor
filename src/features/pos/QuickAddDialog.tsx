@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/select";
 import { listActiveCategories } from "@/lib/firestore/categories";
 import { createProduct, generateUniqueBarcode, getProductByBarcode, type ProductInput } from "@/lib/firestore/products";
+import { friendlyError } from "@/lib/errors";
 import type { Product } from "@/types";
 
 interface Props {
@@ -89,7 +90,7 @@ export function QuickAddDialog({ barcode, manual, onClose, onSaved }: Props) {
       onClose();
     },
     onError: (err) => {
-      setError(err instanceof Error ? err.message : "Gagal menyimpan.");
+      setError(friendlyError(err, "Gagal menyimpan produk. Coba lagi ya."));
     },
   });
 

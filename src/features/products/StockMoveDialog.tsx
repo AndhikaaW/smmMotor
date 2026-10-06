@@ -13,6 +13,7 @@ import {
 import { moveStock } from "@/lib/firestore/stock";
 import { useAuth } from "@/app/providers/AuthProvider";
 import type { Product } from "@/types";
+import { friendlyError } from "@/lib/errors";
 
 interface Props {
   product: Product | null;
@@ -43,7 +44,7 @@ export function StockMoveDialog({ product, onClose, onSaved }: Props) {
       onClose();
     },
     onError: (err) => {
-      setError(err instanceof Error ? err.message : "Gagal.");
+      setError(friendlyError(err, "Gagal mengubah stok. Coba lagi ya."));
     },
   });
 

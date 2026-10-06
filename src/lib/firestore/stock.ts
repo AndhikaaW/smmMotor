@@ -15,12 +15,12 @@ import { db } from "@/lib/firebase/client";
 import type { StockMovement } from "@/types";
 
 export const adjustSchema = z.object({
-  productId: z.string().min(1),
-  physicalStock: z.number().int().min(0, "Stok fisik >= 0"),
-  reason: z.enum(["Rusak", "Hilang", "Stock opname", "Salah input", "Lainnya"]),
-  note: z.string().trim().max(200).default(""),
-  userId: z.string().min(1),
-  userName: z.string().min(1),
+  productId: z.string({ error: "Pilih produk dulu ya." }).min(1, "Pilih produk dulu ya."),
+  physicalStock: z.number({ error: "Stok fisik belum diisi. Isi angkanya ya." }).int("Stok fisik harus bilangan bulat ya.").min(0, "Stok fisik tidak boleh kurang dari 0 ya."),
+  reason: z.enum(["Rusak", "Hilang", "Stock opname", "Salah input", "Lainnya"], { error: "Alasan belum dipilih. Pilih salah satu ya." }),
+  note: z.string({ error: "Catatan bermasalah. Kosongkan saja ya." }).trim().max(200, "Catatan maksimal 200 huruf. Pendekkan ya.").default(""),
+  userId: z.string({ error: "Sesi login bermasalah. Login ulang ya." }).min(1, "Sesi login bermasalah. Login ulang ya."),
+  userName: z.string({ error: "Sesi login bermasalah. Login ulang ya." }).min(1, "Sesi login bermasalah. Login ulang ya."),
 });
 
 export type AdjustInput = z.infer<typeof adjustSchema>;
@@ -30,7 +30,7 @@ export async function adjustStock(input: AdjustInput) {
   await runTransaction(db, async (tx) => {
     const ref = doc(db, "products", parsed.productId);
     const snap = await tx.get(ref);
-    if (!snap.exists()) throw new Error("Produk tidak ditemukan.");
+    if (!snap.exists()) throw new Error("Produk tidak ketemu. Muat ulang, mungkin sudah dihapus ya.");
     const data = snap.data() as { stock: number; name: string };
     const before = data.stock;
     const diff = parsed.physicalStock - before;
@@ -55,11 +55,11 @@ export async function adjustStock(input: AdjustInput) {
   });
 }
 export const moveSchema = z.object({
-  productId: z.string().min(1),
-  direction: z.enum(["in", "out"]),
-  quantity: z.number().int().min(1, "Jumlah >= 1"),
-  userId: z.string().min(1),
-  userName: z.string().min(1),
+  productId: z.string({ error: "Pilih produk dulu ya." }).min(1, "Pilih produk dulu ya."),
+  direction: z.enum(["in", "out"], { error: "Arah stok bermasalah. Coba lagi ya." }),
+  quantity: z.number({ error: "Jumlah belum diisi. Isi angkanya ya." }).int("Jumlah harus bilangan bulat ya.").min(1, "Jumlah minimal 1. Tambah lagi ya."),
+  userId: z.string({ error: "Sesi login bermasalah. Login ulang ya." }).min(1, "Sesi login bermasalah. Login ulang ya."),
+  userName: z.string({ error: "Sesi login bermasalah. Login ulang ya." }).min(1, "Sesi login bermasalah. Login ulang ya."),
 });
 
 export type MoveInput = z.infer<typeof moveSchema>;
@@ -69,10 +69,10 @@ export async function moveStock(input: MoveInput) {
   await runTransaction(db, async (tx) => {
     const ref = doc(db, "products", parsed.productId);
     const snap = await tx.get(ref);
-    if (!snap.exists()) throw new Error("Produk tidak ditemukan.");
+    if (!snap.exists()) throw new Error("Produk tidak ketemu. Muat ulang, mungkin sudah dihapus ya.");
     const data = snap.data() as { stock: number; name: string };
     const after = data.stock + (parsed.direction === "in" ? parsed.quantity : -parsed.quantity);
-    if (after < 0) throw new Error(`Stok kurang. Sisa ${data.stock}, mau kurang ${parsed.quantity}.`);
+    if (after < 0) throw new Error(`Stok ${data.name} tidak cukup. Sisa ${data.stock}, mau keluar ${parsed.quantity}. Kurangi jumlahnya ya.`);
     tx.update(ref, { stock: after, updatedAt: serverTimestamp() });
     tx.set(doc(collection(db, "stock_movements")), {
       productId: parsed.productId,

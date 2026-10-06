@@ -18,6 +18,7 @@ export interface GeneralSettings {
   storeName: string;
   address: string;
   phone: string;
+  email: string;
   receiptHeader: string;
   receiptFooter: string;
   paperSize: "58" | "80";
@@ -51,13 +52,8 @@ export interface ServiceItem {
   isActive: boolean;
 }
 
-export interface Mechanic {
-  id: string;
-  name: string;
-  isActive: boolean;
-}
-
 export type CartItemType = "product" | "service";
+
 
 export interface CartItem {
   type: CartItemType;
@@ -80,8 +76,6 @@ export interface Transaction {
   customerName?: string;
   vehiclePlate?: string;
   vehicleType?: string;
-  mechanicId?: string;
-  mechanicName?: string;
   items: CartItem[];
   subtotal: number;
   total: number;

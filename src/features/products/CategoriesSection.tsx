@@ -21,6 +21,7 @@ import {
   setCategoryActive,
 } from "@/lib/firestore/categories";
 import type { Category } from "@/types";
+import { friendlyError } from "@/lib/errors";
 
 export function CategoriesSection() {
   const queryClient = useQueryClient();
@@ -47,7 +48,7 @@ export function CategoriesSection() {
       refresh();
     },
     onError: (err) => {
-      setError(err instanceof Error ? err.message : "Gagal.");
+      setError(friendlyError(err, "Gagal menyimpan kategori. Coba lagi ya."));
     },
   });
 

@@ -23,6 +23,7 @@ import {
   type ServiceInput,
 } from "@/lib/firestore/services";
 import type { ServiceItem as Service } from "@/types";
+import { friendlyError } from "@/lib/errors";
 
 const EMPTY: ServiceInput = { name: "", price: 0, description: "" };
 
@@ -40,8 +41,10 @@ export function ServicesPage() {
   }
 
   const saveMutation = useMutation({
-    mutationFn: (input: ServiceInput) =>
-      editingId ? updateService(editingId, input) : createService(input),
+    mutationFn: async (input: ServiceInput) => {
+      if (editingId) await updateService(editingId, input);
+      else await createService(input);
+    },
     onSuccess: () => {
       setOpen(false);
       setEditingId(null);
@@ -49,7 +52,7 @@ export function ServicesPage() {
       refresh();
     },
     onError: (err) => {
-      setError(err instanceof Error ? err.message : "Gagal menyimpan.");
+      setError(friendlyError(err, "Gagal menyimpan jasa. Coba lagi ya."));
     },
   });
 

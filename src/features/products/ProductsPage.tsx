@@ -32,6 +32,7 @@ import {
   type ProductInput,
 } from "@/lib/firestore/products";
 import type { Product } from "@/types";
+import { friendlyError } from "@/lib/errors";
 
 function emptyForm(categories: { id: string; name: string }[]): ProductInput {
   return {
@@ -78,7 +79,7 @@ export function ProductsPage() {
       refresh();
     },
     onError: (err) => {
-      setFormError(err instanceof Error ? err.message : "Gagal menyimpan.");
+      setFormError(friendlyError(err, "Gagal menyimpan produk. Coba lagi ya."));
     },
   });
 

@@ -1,15 +1,26 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { NumberInput } from "@/components/ui/number-input";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { useAuth } from "@/app/providers/AuthProvider";
-import { getProductByBarcode, searchProductsByName } from "@/lib/firestore/products";
+import { getProductByBarcode, searchProductsByName, updateProduct } from "@/lib/firestore/products";
 import { QuickAddDialog } from "@/features/pos/QuickAddDialog";
-import { listServices, listMechanics } from "@/lib/firestore/services";
+import { QuickAddServiceDialog } from "@/features/pos/QuickAddServiceDialog";
+import { listServices, updateService } from "@/lib/firestore/services";
 import { getGeneralSettings } from "@/lib/firestore/settings";
 import { checkout } from "@/lib/firestore/transactions";
-import { buildReceiptText, downloadTextFile, printTextViaBluetooth } from "@/lib/receipt";
+import { barcodeValueOf, buildReceiptText, downloadTextFile, formatReceiptDate, printTextViaBluetooth, shortNumberOf, type ReceiptDataInput } from "@/lib/receipt";
+import { ReceiptPrint } from "@/components/ReceiptPrint";
 import type { CartItem, PaymentMethod, Product, ServiceItem } from "@/types";
+import { friendlyError } from "@/lib/errors";
 
 interface SuccessInfo {
   transactionNumber: string;
@@ -21,7 +32,6 @@ interface SuccessInfo {
   customerName: string;
   vehiclePlate: string;
   vehicleType: string;
-  mechanicName: string;
 }
 
 const METHOD_LABEL: Record<PaymentMethod, string> = {
@@ -36,7 +46,6 @@ export function PosPage() {
   const { appUser } = useAuth();
   const queryClient = useQueryClient();
   const servicesQuery = useQuery({ queryKey: ["services"], queryFn: listServices, staleTime: 10 * 60 * 1000 });
-  const mechanicsQuery = useQuery({ queryKey: ["mechanics"], queryFn: listMechanics, staleTime: 10 * 60 * 1000 });
   const settingsQuery = useQuery({
     queryKey: ["settings", "general"],
     queryFn: getGeneralSettings,
@@ -46,12 +55,12 @@ export function PosPage() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [barcode, setBarcode] = useState("");
   const [search, setSearch] = useState("");
+  const [serviceSearch, setServiceSearch] = useState("");
   const [scanError, setScanError] = useState<string | null>(null);
   const [scanReady] = useState(true);
   const [customerName] = useState("");
   const [vehiclePlate] = useState("");
   const [vehicleType, setVehicleType] = useState("");
-  const [mechanicId, setMechanicId] = useState("");
   const [payOpen, setPayOpen] = useState(false);
   const [method, setMethod] = useState<PaymentMethod>("cash");
   const [paid, setPaid] = useState(0);
@@ -62,6 +71,10 @@ export function PosPage() {
   const [printing, setPrinting] = useState(false);
   const [unknownBarcode, setUnknownBarcode] = useState<string | null>(null);
   const [manualOpen, setManualOpen] = useState(false);
+  const [serviceOpen, setServiceOpen] = useState(false);
+  const [priceEdit, setPriceEdit] = useState<{ kind: "product" | "service"; id: string; name: string; price: number } | null>(null);
+  const [priceProduct, setPriceProduct] = useState<Product | null>(null);
+  const [priceError, setPriceError] = useState<string | null>(null);
 
   const productSearchQuery = useQuery({
     queryKey: ["products", "pos-search", search.trim()],
@@ -76,10 +89,10 @@ export function PosPage() {
     () => (servicesQuery.data ?? []).filter((s) => s.isActive),
     [servicesQuery.data],
   );
-  const activeMechanics = useMemo(
-    () => (mechanicsQuery.data ?? []).filter((m) => m.isActive),
-    [mechanicsQuery.data],
-  );
+  const q = serviceSearch.trim().toLowerCase();
+  const filteredServices = q
+    ? activeServices.filter((s) => s.name.toLowerCase().includes(q))
+    : activeServices;
   const paymentMethods = settingsQuery.data?.paymentMethods ?? ["cash"];
 
   const subtotal = useMemo(
@@ -177,7 +190,7 @@ export function PosPage() {
       return;
     }
     if (!found.isActive) {
-      setScanError(`Produk ${found.name} nonaktif.`);
+      setScanError(`Produk ${found.name} sedang nonaktif. Aktifkan dulu di halaman Produk ya.`);
       setBarcode("");
       barcodeRef.current?.focus();
       return;
@@ -200,6 +213,67 @@ export function PosPage() {
     );
   }
 
+  function openPriceEditProduct(p: Product) {
+    setPriceProduct(p);
+    setPriceEdit({ kind: "product", id: p.id, name: p.name, price: p.sellingPrice });
+    setPriceError(null);
+  }
+
+  function openPriceEditService(s: ServiceItem) {
+    setPriceProduct(null);
+    setPriceEdit({ kind: "service", id: s.id, name: s.name, price: s.price });
+    setPriceError(null);
+  }
+
+  const priceMutation = useMutation({
+    mutationFn: async (next: { kind: "product" | "service"; id: string; price: number }) => {
+      if (next.price < 0) throw new Error("Harga tidak boleh kurang dari 0 ya.");
+      const rounded = Math.floor(next.price);
+      if (next.kind === "product") {
+        if (!priceProduct) throw new Error("Data produk tidak ketemu. Tutup lalu buka lagi ya.");
+        await updateProduct(next.id, {
+          barcode: priceProduct.barcode,
+          name: priceProduct.name,
+          categoryId: priceProduct.categoryId,
+          categoryName: priceProduct.categoryName,
+          purchasePrice: priceProduct.purchasePrice,
+          sellingPrice: rounded,
+          stock: priceProduct.stock,
+          minimumStock: priceProduct.minimumStock,
+          unit: priceProduct.unit,
+        });
+        return rounded;
+      }
+      const s = (servicesQuery.data ?? []).find((x) => x.id === next.id);
+      if (!s) throw new Error("Data jasa tidak ketemu. Tutup lalu buka lagi ya.");
+      await updateService(next.id, { name: s.name, price: rounded, description: s.description ?? "" });
+      return rounded;
+    },
+    onSuccess: (rounded) => {
+      if (!priceEdit) return;
+      // Harga di keranjang ikut terkoreksi bila itemnya sudah masuk.
+      setCart((prev) =>
+        prev.map((item) => {
+          if (priceEdit.kind === "product" && item.type === "product" && item.productId === priceEdit.id)
+            return { ...item, price: rounded, subtotal: rounded * item.quantity };
+          if (priceEdit.kind === "service" && item.type === "service" && item.serviceId === priceEdit.id)
+            return { ...item, price: rounded, subtotal: rounded * item.quantity };
+          return item;
+        }),
+      );
+      setPriceEdit(null);
+      setPriceProduct(null);
+      setPriceError(null);
+      void queryClient.invalidateQueries({ queryKey: ["products"] });
+      void queryClient.invalidateQueries({ queryKey: ["services"] });
+      void queryClient.invalidateQueries({ queryKey: ["products", "pos-search"] });
+    },
+    onError: (err) => {
+      setPriceError(friendlyError(err, "Gagal menyimpan harga. Coba lagi ya."));
+    },
+  });
+
+
   const checkoutMutation = useMutation({
     mutationFn: () =>
       checkout({
@@ -211,8 +285,6 @@ export function PosPage() {
         customerName: "",
         vehiclePlate: "",
         vehicleType: vehicleType.trim(),
-        mechanicId,
-        mechanicName: activeMechanics.find((m) => m.id === mechanicId)?.name ?? "",
       }),
     onSuccess: (res) => {
       setSuccess({
@@ -225,7 +297,6 @@ export function PosPage() {
         customerName: customerName.trim(),
         vehiclePlate: vehiclePlate.trim().toUpperCase(),
         vehicleType: vehicleType.trim(),
-        mechanicName: activeMechanics.find((m) => m.id === mechanicId)?.name ?? "",
       });
       setCart([]);
       setPayOpen(false);
@@ -234,7 +305,7 @@ export function PosPage() {
       void queryClient.invalidateQueries({ queryKey: ["products"] });
     },
     onError: (err) => {
-      setCheckoutError(err instanceof Error ? err.message : "Transaksi gagal.");
+      setCheckoutError(friendlyError(err, "Transaksi gagal. Cek lagi keranjang & pembayaran ya."));
     },
   });
 
@@ -246,26 +317,30 @@ export function PosPage() {
     return () => document.body.classList.remove("paper-58");
   }, [settingsQuery.data?.paperSize]);
 
-  function receiptText() {
-    if (!success) return "";
-    return buildReceiptText({
-      header: settingsQuery.data?.receiptHeader ?? "Sedyo Makmur Motor",
-      address: settingsQuery.data?.address,
-      phone: settingsQuery.data?.phone,
-      transactionNumber: success.transactionNumber,
-      dateStr: new Date().toLocaleString("id-ID"),
-      cashierName: appUser?.name ?? "",
-      customerName: success.customerName,
-      vehiclePlate: success.vehiclePlate,
-      vehicleType: success.vehicleType,
-      mechanicName: success.mechanicName,
+  function receiptData(): ReceiptDataInput | null {
+    if (!success) return null;
+    return {
+      storeName: settingsQuery.data?.receiptHeader ?? settingsQuery.data?.storeName ?? "sedyo makmur motor",
+      address: settingsQuery.data?.address || undefined,
+      email: settingsQuery.data?.email || undefined,
+      phone: settingsQuery.data?.phone || undefined,
+      dateStr: formatReceiptDate(new Date()),
+      shortNumber: shortNumberOf(success.transactionNumber),
+      barcodeValue: barcodeValueOf(success.transactionNumber),
+      // Keputusan user: baris Pelanggan diisi dari input jenis kendaraan.
+      customerLine: success.vehicleType,
       items: success.items,
       total: success.total,
       payment: success.payment,
       change: success.change,
-      paymentMethod: success.paymentMethod,
-      footer: settingsQuery.data?.receiptFooter,
-    });
+      footer: settingsQuery.data?.receiptFooter || undefined,
+    };
+  }
+
+  function receiptText() {
+    const d = receiptData();
+    if (!d) return "";
+    return buildReceiptText(d);
   }
 
   function printReceipt() {
@@ -288,7 +363,7 @@ export function PosPage() {
       await printTextViaBluetooth(receiptText());
       setPrintMsg("Terkirim ke printer Bluetooth.");
     } catch (err) {
-      setPrintMsg(err instanceof Error ? err.message : "Bluetooth gagal.");
+      setPrintMsg(friendlyError(err, "Gagal cetak via Bluetooth. Pakai tombol Salin lalu cetak dari RawBT ya."));
     } finally {
       setPrinting(false);
     }
@@ -300,10 +375,9 @@ export function PosPage() {
         <p className="text-4xl text-success">✓</p>
         <h1 className="mt-2 text-xl font-bold">Transaksi Berhasil</h1>
         <p className="mt-1 font-mono text-sm">{success.transactionNumber}</p>
-        {(success.customerName || success.vehiclePlate || success.vehicleType || success.mechanicName) && (
+        {(success.customerName || success.vehiclePlate || success.vehicleType) && (
           <p className="mt-2 text-sm text-muted">
             {[success.customerName, success.vehiclePlate, success.vehicleType].filter(Boolean).join(" • ")}
-            {success.mechanicName ? ` • Mekanik: ${success.mechanicName}` : ""}
           </p>
         )}
         <p className="mt-4 text-sm text-muted">Total</p>
@@ -341,42 +415,8 @@ export function PosPage() {
           </Button>
         </div>
         {printMsg && <p className="mt-2 text-xs text-muted">{printMsg}</p>}
-        <div className="print-only mt-6 text-left text-xs">
-          <p className="font-bold">
-            {settingsQuery.data?.receiptHeader ?? "Sedyo Makmur Motor"}
-          </p>
-          <p>{settingsQuery.data?.address}</p>
-          <p>{settingsQuery.data?.phone}</p>
-          <p>--------------------------------</p>
-          <p>{success.transactionNumber}</p>
-          <p>
-            {new Date().toLocaleString("id-ID")} • {appUser?.name}
-          </p>
-          {success.customerName && <p>Pelanggan: {success.customerName}</p>}
-          {(success.vehiclePlate || success.vehicleType) && (
-            <p>Kendaraan: {[success.vehiclePlate, success.vehicleType].filter(Boolean).join(" / ")}</p>
-          )}
-          {success.mechanicName && <p>Mekanik: {success.mechanicName}</p>}
-          <p>--------------------------------</p>
-          {success.items.map((i) => (
-            <p key={`${i.type}-${i.productId ?? i.serviceId}`}>
-              {i.name}
-              <br />{i.quantity} x {i.price.toLocaleString("id-ID")}
-              {" = "}
-              {i.subtotal.toLocaleString("id-ID")}
-            </p>
-          ))}
-          <p>--------------------------------</p>
-          <p>TOTAL: Rp{success.total.toLocaleString("id-ID")}</p>
-          <p>
-            {success.paymentMethod.toUpperCase()}: Rp
-            {success.payment.toLocaleString("id-ID")}
-          </p>
-          {success.paymentMethod === "cash" && (
-            <p>KEMBALI: Rp{success.change.toLocaleString("id-ID")}</p>
-          )}
-          <p>--------------------------------</p>
-          <p>{settingsQuery.data?.receiptFooter}</p>
+        <div className="print-only mt-6">
+          {receiptData() && <ReceiptPrint d={receiptData()!} />}
         </div>
       </div>
     );
@@ -418,37 +458,79 @@ export function PosPage() {
           </div>
           <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
             {searchedProducts.map((p) => (
-              <button
+              <div
                 key={p.id}
-                type="button"
+                role="button"
+                tabIndex={0}
                 onClick={() => addProduct(p)}
-                className="rounded-xl border border-border bg-surface p-3 text-left hover:border-primary"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") addProduct(p);
+                }}
+                className="cursor-pointer rounded-xl border border-border bg-surface p-3 text-left hover:border-primary"
               >
                 <p className="truncate text-sm font-medium">{p.name}</p>
                 <p className="text-sm font-bold">
                   Rp{p.sellingPrice.toLocaleString("id-ID")}
                 </p>
                 <p className="text-xs text-muted">Stok: {p.stock}</p>
-              </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openPriceEditProduct(p);
+                  }}
+                  className="mt-1 text-xs text-muted hover:text-text hover:underline"
+                >
+                  ✏️ Edit harga
+                </button>
+              </div>
             ))}
           </div>
 
-          {activeServices.length > 0 && (
-            <>
-              <h2 className="mt-6 font-bold">Jasa</h2>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {activeServices.map((s) => (
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="font-bold">Jasa</h2>
+            <Button variant="secondary" size="sm" onClick={() => setServiceOpen(true)}>
+              + Tambah Jasa
+            </Button>
+          </div>
+          <div className="mt-2 flex gap-2">
+            <Input
+              value={serviceSearch}
+              onChange={(e) => setServiceSearch(e.target.value)}
+              placeholder="Cari jasa..."
+              className="h-10 w-full max-w-sm"
+            />
+          </div>
+          {filteredServices.length === 0 ? (
+            <p className="mt-2 text-sm text-muted">Jasa tidak ketemu. Klik + Tambah Jasa ya.</p>
+          ) : (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {filteredServices.map((s) => (
+                <div
+                  key={s.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => addService(s)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") addService(s);
+                  }}
+                  className="cursor-pointer rounded-lg border border-border bg-surface px-3 py-2 text-sm hover:border-primary"
+                >
+                  {s.name} • Rp{s.price.toLocaleString("id-ID")}{" "}
                   <button
-                    key={s.id}
                     type="button"
-                    onClick={() => addService(s)}
-                    className="rounded-lg border border-border bg-surface px-3 py-2 text-sm hover:border-primary"
+                    title="Edit harga jasa"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openPriceEditService(s);
+                    }}
+                    className="ml-1 text-muted hover:text-text"
                   >
-                    {s.name} • Rp{s.price.toLocaleString("id-ID")}
+                    ✏️
                   </button>
-                ))}
-              </div>
-            </>
+                </div>
+              ))}
+            </div>
           )}
         </div>
 
@@ -601,13 +683,6 @@ export function PosPage() {
                 className="mt-1 h-11 w-full rounded-xl border border-border px-3 focus:outline-2 focus:outline-primary"
               />
             </label>
-            <label className="mt-3 block text-sm">
-              <span className="font-medium">Mekanik <span className="font-normal text-muted">(opsional)</span></span>
-              <select value={mechanicId} onChange={(e) => setMechanicId(e.target.value)} className="mt-1 h-11 w-full rounded-xl border border-border bg-surface px-3 focus:outline-2 focus:outline-primary">
-                <option value="">Pilih mekanik (opsional)</option>
-                {activeMechanics.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-              </select>
-            </label>
             <p className="mt-4 text-sm font-medium">Metode Pembayaran</p>
             <div className="mt-2 flex flex-wrap gap-2">
               {paymentMethods.map((m) => (
@@ -677,6 +752,8 @@ export function PosPage() {
           addProduct(p);
           setBarcode("");
           barcodeRef.current?.focus();
+          void queryClient.invalidateQueries({ queryKey: ["products"] });
+          void queryClient.invalidateQueries({ queryKey: ["products", "pos-search"] });
         }}
       />
       <QuickAddDialog
@@ -687,8 +764,49 @@ export function PosPage() {
           addProduct(p);
           setManualOpen(false);
           void queryClient.invalidateQueries({ queryKey: ["products"] });
+          void queryClient.invalidateQueries({ queryKey: ["products", "pos-search"] });
         }}
       />
+      <QuickAddServiceDialog
+        open={serviceOpen}
+        onClose={() => setServiceOpen(false)}
+        onSaved={(s) => {
+          addService(s);
+          setServiceOpen(false);
+          // Auto-fetch: daftar jasa langsung segar, card baru bisa diklik tanpa refresh.
+          void queryClient.invalidateQueries({ queryKey: ["services"] });
+        }}
+      />
+      <Dialog open={priceEdit !== null} onOpenChange={(v) => !v && setPriceEdit(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit harga — {priceEdit?.name}</DialogTitle>
+          </DialogHeader>
+          <p className="text-xs text-muted">
+            Koreksi harga master di sini. Harga di keranjang ikut terkoreksi, dan struk memakai harga baru. Perubahan tersimpan permanen.
+          </p>
+          <label className="mt-2 block text-sm">
+            Harga baru (Rp)
+            <NumberInput
+              value={priceEdit?.price ?? 0}
+              onValueChange={(n) => setPriceEdit((prev) => (prev ? { ...prev, price: n } : prev))}
+              className="mt-1 h-12 text-lg"
+            />
+          </label>
+          {priceError && <p className="mt-1 text-sm text-danger">{priceError}</p>}
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setPriceEdit(null)} disabled={priceMutation.isPending}>
+              Batal
+            </Button>
+            <Button
+              disabled={priceMutation.isPending || !priceEdit}
+              onClick={() => priceEdit && priceMutation.mutate({ kind: priceEdit.kind, id: priceEdit.id, price: priceEdit.price })}
+            >
+              {priceMutation.isPending ? "Menyimpan..." : "Simpan Harga"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

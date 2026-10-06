@@ -6,6 +6,7 @@ import { useAuth } from "@/app/providers/AuthProvider";
 import { getProductByBarcode, listProducts } from "@/lib/firestore/products";
 import { adjustStock } from "@/lib/firestore/stock";
 import { listMovements } from "@/lib/firestore/stock";
+import { friendlyError } from "@/lib/errors";
 
 const REASONS = ["Rusak", "Hilang", "Stock opname", "Salah input", "Lainnya"] as const;
 
@@ -52,7 +53,7 @@ export function StockPage() {
     try {
       const found = await getProductByBarcode(code);
       if (!found) {
-        setScanError(`Barcode ${code} tidak ditemukan.`);
+        setScanError("Barcode tidak dikenal. Cek tempelan barcode / tambah produk baru ya.");
         return;
       }
       setProductId(found.id);
@@ -88,7 +89,7 @@ export function StockPage() {
       refresh();
     },
     onError: (err) => {
-      setError(err instanceof Error ? err.message : "Gagal.");
+      setError(friendlyError(err, "Gagal menyimpan stok. Coba lagi ya."));
       setMessage(null);
     },
   });
@@ -139,11 +140,11 @@ export function StockPage() {
               e.preventDefault();
               setError(null);
               if (!productId) {
-                setError("Pilih produk.");
+                setError("Pilih produk dulu ya.");
                 return;
               }
               if (!Number.isInteger(physicalNumber) || physicalNumber < 0) {
-                setError("Stok fisik harus bilangan >= 0.");
+                setError("Stok hasil hitungan harus angka 0 atau lebih ya.");
                 return;
               }
               adjustMutation.mutate();

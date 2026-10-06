@@ -1,5 +1,6 @@
 import { Component } from "react";
 import type { ReactNode } from "react";
+import { friendlyError } from "@/lib/errors";
 
 interface State {
   error: Error | null;
@@ -24,7 +25,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
             <p className="text-4xl">⚠️</p>
             <h1 className="mt-2 text-lg font-bold">Terjadi kesalahan</h1>
             <p className="mt-1 text-sm text-muted">
-              {this.state.error.message || "Coba muat ulang halaman."}
+              {friendlyError(this.state.error, "Terjadi kesalahan. Coba muat ulang halaman ya.")}
             </p>
             <button
               type="button"
