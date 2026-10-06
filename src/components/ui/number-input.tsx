@@ -21,7 +21,7 @@ export function NumberInput({
       type="text"
       inputMode="numeric"
       placeholder={placeholder}
-      value={value ? value.toLocaleString("id-ID") : ""}
+      value={Number.isFinite(value) ? (value as number).toLocaleString("id-ID") : ""}
       onChange={(e) => {
         const digits = e.target.value.replace(/\D/g, "");
         onValueChange(digits ? parseInt(digits, 10) : 0);

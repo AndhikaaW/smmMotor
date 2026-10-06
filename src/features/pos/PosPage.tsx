@@ -4,9 +4,11 @@ import { Button } from "@/components/ui/button";
 import { NumberInput } from "@/components/ui/number-input";
 import { useAuth } from "@/app/providers/AuthProvider";
 import { getProductByBarcode, searchProductsByName } from "@/lib/firestore/products";
+import { QuickAddDialog } from "@/features/pos/QuickAddDialog";
 import { listServices, listMechanics } from "@/lib/firestore/services";
 import { getGeneralSettings } from "@/lib/firestore/settings";
 import { checkout } from "@/lib/firestore/transactions";
+import { buildReceiptText, downloadTextFile, printTextViaBluetooth } from "@/lib/receipt";
 import type { CartItem, PaymentMethod, Product, ServiceItem } from "@/types";
 
 interface SuccessInfo {
@@ -56,6 +58,10 @@ export function PosPage() {
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [success, setSuccess] = useState<SuccessInfo | null>(null);
   const barcodeRef = useRef<HTMLInputElement>(null);
+  const [printMsg, setPrintMsg] = useState<string | null>(null);
+  const [printing, setPrinting] = useState(false);
+  const [unknownBarcode, setUnknownBarcode] = useState<string | null>(null);
+  const [manualOpen, setManualOpen] = useState(false);
 
   const productSearchQuery = useQuery({
     queryKey: ["products", "pos-search", search.trim()],
@@ -164,8 +170,14 @@ export function PosPage() {
     if (!code) return;
     setScanError(null);
     const found = await getProductByBarcode(code);
-    if (!found || !found.isActive) {
-      setScanError(`Barcode ${code} tidak ditemukan.`);
+    if (!found) {
+      setUnknownBarcode(code);
+      setScanError(null);
+      setBarcode("");
+      return;
+    }
+    if (!found.isActive) {
+      setScanError(`Produk ${found.name} nonaktif.`);
       setBarcode("");
       barcodeRef.current?.focus();
       return;
@@ -174,7 +186,6 @@ export function PosPage() {
     setBarcode("");
     barcodeRef.current?.focus();
   }
-
   function setQty(index: number, quantity: number) {
     if (quantity < 1) {
       setCart((prev) => prev.filter((_, i) => i !== index));
@@ -235,8 +246,52 @@ export function PosPage() {
     return () => document.body.classList.remove("paper-58");
   }, [settingsQuery.data?.paperSize]);
 
+  function receiptText() {
+    if (!success) return "";
+    return buildReceiptText({
+      header: settingsQuery.data?.receiptHeader ?? "Sedyo Makmur Motor",
+      address: settingsQuery.data?.address,
+      phone: settingsQuery.data?.phone,
+      transactionNumber: success.transactionNumber,
+      dateStr: new Date().toLocaleString("id-ID"),
+      cashierName: appUser?.name ?? "",
+      customerName: success.customerName,
+      vehiclePlate: success.vehiclePlate,
+      vehicleType: success.vehicleType,
+      mechanicName: success.mechanicName,
+      items: success.items,
+      total: success.total,
+      payment: success.payment,
+      change: success.change,
+      paymentMethod: success.paymentMethod,
+      footer: settingsQuery.data?.receiptFooter,
+    });
+  }
+
   function printReceipt() {
     window.print();
+  }
+
+  async function copyReceipt() {
+    try {
+      await navigator.clipboard.writeText(receiptText());
+      setPrintMsg("Struk disalin — tempel ke RawBT / aplikasi printer.");
+    } catch {
+      setPrintMsg("Gagal menyalin. Pakai Unduh .txt.");
+    }
+  }
+
+  async function bluetoothReceipt() {
+    setPrinting(true);
+    setPrintMsg(null);
+    try {
+      await printTextViaBluetooth(receiptText());
+      setPrintMsg("Terkirim ke printer Bluetooth.");
+    } catch (err) {
+      setPrintMsg(err instanceof Error ? err.message : "Bluetooth gagal.");
+    } finally {
+      setPrinting(false);
+    }
   }
 
   if (success) {
@@ -261,12 +316,21 @@ export function PosPage() {
             Rp{success.change.toLocaleString("id-ID")}
           </p>
         )}
-        <div className="mt-6 flex gap-2">
-          <Button variant="secondary" className="flex-1" onClick={printReceipt}>
+        <div className="mt-6 grid grid-cols-2 gap-2">
+          <Button variant="secondary" onClick={printReceipt}>
             Cetak Struk
           </Button>
+          <Button variant="secondary" disabled={printing} onClick={() => void bluetoothReceipt()}>
+            {printing ? "Mengirim..." : "Bluetooth"}
+          </Button>
+          <Button variant="secondary" onClick={() => void copyReceipt()}>
+            Salin Teks
+          </Button>
+          <Button variant="secondary" onClick={() => downloadTextFile(`${success.transactionNumber}.txt`, receiptText())}>
+            Unduh .txt
+          </Button>
           <Button
-            className="flex-1"
+            className="col-span-2"
             autoFocus
             onClick={() => {
               setSuccess(null);
@@ -276,6 +340,7 @@ export function PosPage() {
             Transaksi Baru
           </Button>
         </div>
+        {printMsg && <p className="mt-2 text-xs text-muted">{printMsg}</p>}
         <div className="print-only mt-6 text-left text-xs">
           <p className="font-bold">
             {settingsQuery.data?.receiptHeader ?? "Sedyo Makmur Motor"}
@@ -340,12 +405,17 @@ export function PosPage() {
             clear
           </p>
           {scanError && <p className="mt-1 text-sm text-danger">{scanError}</p>}
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Cari produk manual..."
-            className="mt-3 h-10 w-full max-w-sm rounded-lg border border-border bg-surface px-3 text-sm"
-          />
+          <div className="mt-3 flex gap-2">
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Cari produk manual..."
+              className="h-10 w-full max-w-sm rounded-lg border border-border bg-surface px-3 text-sm"
+            />
+            <Button variant="secondary" onClick={() => setManualOpen(true)}>
+              + Tambah
+            </Button>
+          </div>
           <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
             {searchedProducts.map((p) => (
               <button
@@ -597,6 +667,28 @@ export function PosPage() {
           </div>
         </div>
       )}
+      <QuickAddDialog
+        barcode={unknownBarcode}
+        onClose={() => {
+          setUnknownBarcode(null);
+          barcodeRef.current?.focus();
+        }}
+        onSaved={(p) => {
+          addProduct(p);
+          setBarcode("");
+          barcodeRef.current?.focus();
+        }}
+      />
+      <QuickAddDialog
+        barcode={manualOpen ? "" : null}
+        manual
+        onClose={() => setManualOpen(false)}
+        onSaved={(p) => {
+          addProduct(p);
+          setManualOpen(false);
+          void queryClient.invalidateQueries({ queryKey: ["products"] });
+        }}
+      />
     </div>
   );
 }

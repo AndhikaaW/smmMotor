@@ -22,8 +22,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { CategoriesSection } from "@/features/products/CategoriesSection";
 import { listActiveCategories } from "@/lib/firestore/categories";
+import { StockMoveDialog } from "@/features/products/StockMoveDialog";
 import {
   createProduct,
   listProducts,
@@ -62,6 +62,7 @@ export function ProductsPage() {
   const [form, setForm] = useState<ProductInput>(emptyForm([]));
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  const [stockProduct, setStockProduct] = useState<Product | null>(null);
 
   function refresh() {
     void queryClient.invalidateQueries({ queryKey: ["products"] });
@@ -168,15 +169,20 @@ export function ProductsPage() {
                     Rp{p.sellingPrice.toLocaleString("id-ID")}
                   </td>
                   <td className="px-5 py-3.5">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">{p.stock}</span>
+                    <button
+                      type="button"
+                      onClick={() => setStockProduct(p)}
+                      className="flex items-center gap-2 rounded-md px-1 py-0.5 hover:bg-background"
+                      title="Klik untuk tambah / kurang stok"
+                    >
+                      <span className="font-medium underline decoration-dotted underline-offset-4">{p.stock}</span>
                       <span className="text-xs text-muted">{p.unit}</span>
                       {p.stock <= p.minimumStock && (
                         <Badge variant={p.stock === 0 ? "danger" : "warning"}>
                           {p.stock === 0 ? "Habis" : "Menipis"}
                         </Badge>
                       )}
-                    </div>
+                    </button>
                   </td>
                   <td className="px-5 py-3.5">
                     <Badge variant={p.isActive ? "success" : "secondary"}>
@@ -226,9 +232,6 @@ export function ProductsPage() {
           />
         )}
       </Card>
-
-      {/* Categories */}
-      <CategoriesSection />
 
       {/* Dialog Create/Edit */}
       <Dialog open={open} onOpenChange={setOpen}>
@@ -351,6 +354,7 @@ export function ProductsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <StockMoveDialog product={stockProduct} onClose={() => setStockProduct(null)} onSaved={refresh} />
     </div>
   );
 }

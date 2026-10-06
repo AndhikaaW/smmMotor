@@ -30,11 +30,29 @@ export const productSchema = z.object({
 export type ProductInput = z.infer<typeof productSchema>;
 
 type ProductDoc = Omit<Product, "id">;
+type RawDoc = Partial<ProductDoc> & Record<string, unknown>;
+
+// ponytail: normalisasi sekali di reader; legacy doc tanpa field tetap kebuka & kesimpan.
+function normalizeProduct(id: string, data: RawDoc): Product {
+  return {
+    id,
+    barcode: typeof data.barcode === "string" ? data.barcode : "",
+    name: typeof data.name === "string" ? data.name : "",
+    categoryId: typeof data.categoryId === "string" ? data.categoryId : "",
+    categoryName: typeof data.categoryName === "string" ? data.categoryName : "",
+    purchasePrice: typeof data.purchasePrice === "number" && Number.isFinite(data.purchasePrice) ? data.purchasePrice : 0,
+    sellingPrice: typeof data.sellingPrice === "number" && Number.isFinite(data.sellingPrice) ? data.sellingPrice : 0,
+    stock: typeof data.stock === "number" && Number.isFinite(data.stock) ? Math.floor(data.stock) : 0,
+    minimumStock: typeof data.minimumStock === "number" && Number.isFinite(data.minimumStock) ? Math.floor(data.minimumStock) : 0,
+    unit: typeof data.unit === "string" && data.unit ? data.unit : "pcs",
+    isActive: typeof data.isActive === "boolean" ? data.isActive : true,
+  };
+}
 export async function listProducts(): Promise<Product[]> {
   const snap = await getDocs(
     query(collection(db, "products"), orderBy("name"), limit(200)),
   );
-  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as ProductDoc) }));
+  return snap.docs.map((d) => normalizeProduct(d.id, d.data() as RawDoc));
 }
 
 export async function countLowStock(sampleSize = 200): Promise<number> {
@@ -43,7 +61,7 @@ export async function countLowStock(sampleSize = 200): Promise<number> {
   );
   let count = 0;
   for (const d of snap.docs) {
-    const p = d.data() as ProductDoc;
+    const p = normalizeProduct(d.id, d.data() as RawDoc);
     if (p.isActive && p.stock <= p.minimumStock) count += 1;
   }
   return count;
@@ -55,7 +73,7 @@ export async function getProductByBarcode(barcode: string): Promise<Product | nu
   );
   if (snap.empty) return null;
   const d = snap.docs[0];
-  return { id: d.id, ...(d.data() as ProductDoc) };
+  return normalizeProduct(d.id, d.data() as RawDoc);
 }
 
 export interface ProductPage {
@@ -87,7 +105,7 @@ export async function searchProductsByName(
     : await getDocs(query(collection(db, "products"), ...clauses));
   const last = snap.docs[snap.docs.length - 1];
   return {
-    rows: snap.docs.map((d) => ({ id: d.id, ...(d.data() as ProductDoc) })),
+    rows: snap.docs.map((d) => normalizeProduct(d.id, d.data() as RawDoc)),
     lastVisible: last ?? null,
   };
 }
@@ -108,6 +126,25 @@ export async function createProduct(input: ProductInput) {
     });
     tx.set(keyRef, { productId: prodRef.id, createdAt: serverTimestamp() });
   });
+}
+
+export function generateAutoBarcode(prefix = "NPLU-"): string {
+  const t = Date.now().toString(36).toUpperCase();
+  const r = Array.from(crypto.getRandomValues(new Uint8Array(6)))
+    .map((b) => "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"[b % 36])
+    .join("");
+  return `${prefix}${t}${r}`;
+}
+
+// ponytail: cek app-level + klaim atomik di createProduct; full counter bila tabrakan sering.
+export async function generateUniqueBarcode(tries = 5): Promise<string> {
+  let code = generateAutoBarcode();
+  for (let i = 0; i < tries; i++) {
+    const exists = await getProductByBarcode(code);
+    if (!exists) return code;
+    code = generateAutoBarcode();
+  }
+  return code;
 }
 
 export async function updateProduct(id: string, input: ProductInput) {

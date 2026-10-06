@@ -1,9 +1,9 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { NumberInput } from "@/components/ui/number-input";
 import { useAuth } from "@/app/providers/AuthProvider";
-import { listProducts } from "@/lib/firestore/products";
+import { getProductByBarcode, listProducts } from "@/lib/firestore/products";
 import { adjustStock } from "@/lib/firestore/stock";
 import { listMovements } from "@/lib/firestore/stock";
 
@@ -24,6 +24,10 @@ export function StockPage() {
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [barcode, setBarcode] = useState("");
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const barcodeRef = useRef<HTMLInputElement>(null);
 
   const products = useMemo(() => productsQuery.data ?? [], [productsQuery.data]);
   const selected = products.find((p) => p.id === productId);
@@ -39,6 +43,29 @@ export function StockPage() {
     void queryClient.invalidateQueries({ queryKey: ["products"] });
     void queryClient.invalidateQueries({ queryKey: ["stock-movements"] });
   }
+  async function handleScanBarcode(e: React.FormEvent) {
+    e.preventDefault();
+    const code = barcode.trim();
+    if (!code || scanning) return;
+    setScanning(true);
+    setScanError(null);
+    try {
+      const found = await getProductByBarcode(code);
+      if (!found) {
+        setScanError(`Barcode ${code} tidak ditemukan.`);
+        return;
+      }
+      setProductId(found.id);
+      setPhysical(found.stock);
+      setMessage(null);
+      setError(null);
+    } finally {
+      setScanning(false);
+      setBarcode("");
+      barcodeRef.current?.focus();
+    }
+  }
+
 
   const adjustMutation = useMutation({
     mutationFn: () =>
@@ -91,7 +118,22 @@ export function StockPage() {
 
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
         <section className="h-fit rounded-xl border border-border bg-surface p-4">
-          <h2 className="font-bold">Penyesuaian stok</h2>
+          <form onSubmit={handleScanBarcode} className="mt-3 text-sm">
+            <label className="block">
+              Scan barcode (scanner USB / ketik manual)
+              <input
+                ref={barcodeRef}
+                value={barcode}
+                onChange={(e) => setBarcode(e.target.value)}
+                placeholder="🔎 Scan barcode produk..."
+                className="mt-1 h-10 w-full rounded-lg border border-border bg-surface px-3 font-mono"
+              />
+            </label>
+            {scanError && <p className="mt-1 text-danger">{scanError}</p>}
+            {selected && (
+              <p className="mt-1 text-success">✓ {selected.name} — barcode cocok.</p>
+            )}
+          </form>
           <form
             onSubmit={(e) => {
               e.preventDefault();

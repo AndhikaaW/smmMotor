@@ -4,6 +4,7 @@ import {
   LayoutDashboard,
   ShoppingCart,
   Package,
+  Tags,
   Layers,
   Wrench,
   Users2,
@@ -33,6 +34,7 @@ const SECTIONS: {
     items: [
       { to: "/pos", label: "Kasir", icon: ShoppingCart },
       { to: "/products", label: "Produk", icon: Package },
+      { to: "/categories", label: "Kategori", icon: Tags },
       { to: "/stock", label: "Stok", icon: Layers },
       { to: "/services", label: "Jasa", icon: Wrench },
       { to: "/mechanics", label: "Mekanik", icon: Users2 },

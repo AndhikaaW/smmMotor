@@ -54,6 +54,42 @@ export async function adjustStock(input: AdjustInput) {
     });
   });
 }
+export const moveSchema = z.object({
+  productId: z.string().min(1),
+  direction: z.enum(["in", "out"]),
+  quantity: z.number().int().min(1, "Jumlah >= 1"),
+  userId: z.string().min(1),
+  userName: z.string().min(1),
+});
+
+export type MoveInput = z.infer<typeof moveSchema>;
+
+export async function moveStock(input: MoveInput) {
+  const parsed = moveSchema.parse(input);
+  await runTransaction(db, async (tx) => {
+    const ref = doc(db, "products", parsed.productId);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error("Produk tidak ditemukan.");
+    const data = snap.data() as { stock: number; name: string };
+    const after = data.stock + (parsed.direction === "in" ? parsed.quantity : -parsed.quantity);
+    if (after < 0) throw new Error(`Stok kurang. Sisa ${data.stock}, mau kurang ${parsed.quantity}.`);
+    tx.update(ref, { stock: after, updatedAt: serverTimestamp() });
+    tx.set(doc(collection(db, "stock_movements")), {
+      productId: parsed.productId,
+      productName: data.name,
+      type: parsed.direction,
+      quantity: parsed.direction === "in" ? parsed.quantity : -parsed.quantity,
+      stockBefore: data.stock,
+      stockAfter: after,
+      referenceType: "manual",
+      referenceId: "",
+      note: "",
+      userId: parsed.userId,
+      userName: parsed.userName,
+      createdAt: Timestamp.now(),
+    });
+  });
+}
 
 export async function listMovements(
   productId?: string,

@@ -6,6 +6,7 @@ import { LoginPage } from "@/features/auth/LoginPage";
 import { DashboardPage } from "@/features/dashboard/DashboardPage";
 import { UsersPage } from "@/features/users/UsersPage";
 import { ProductsPage } from "@/features/products/ProductsPage";
+import { CategoriesPage } from "@/features/categories/CategoriesPage";
 import { ServicesPage } from "@/features/services/ServicesPage";
 import { MechanicsPage } from "@/features/mechanics/MechanicsPage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
@@ -28,6 +29,7 @@ export const router = createBrowserRouter(
         { index: true, element: <DashboardPage /> },
         { path: "pos", element: <PosPage /> },
         { path: "products", element: <ProductsPage /> },
+        { path: "categories", element: <CategoriesPage /> },
         { path: "stock", element: <StockPage /> },
         { path: "services", element: <ServicesPage /> },
         { path: "mechanics", element: <MechanicsPage /> },

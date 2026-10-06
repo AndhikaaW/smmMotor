@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Printer, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/app/providers/AuthProvider";
@@ -7,8 +7,9 @@ import {
   deleteTransaction,
   listTransactionPage,
 } from "@/lib/firestore/transactions";
+import { buildReceiptText, downloadTextFile, printTextViaBluetooth } from "@/lib/receipt";
+import { getGeneralSettings } from "@/lib/firestore/settings";
 import type { PaymentMethod, Transaction } from "@/types";
-
 const METHODS = ["", "cash", "qris", "transfer", "debit", "other"] as const;
 const STATUSES = ["completed", "all", "deleted"] as const;
 
@@ -35,6 +36,43 @@ export function TransactionsPage() {
   const [selected, setSelected] = useState<Transaction | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [printMsg, setPrintMsg] = useState<string | null>(null);
+  const [printing, setPrinting] = useState(false);
+  const settingsQuery = useQuery({ queryKey: ["settings", "general"], queryFn: getGeneralSettings, staleTime: 15 * 60 * 1000 });
+
+  function selectedReceiptText(t: Transaction): string {
+    return buildReceiptText({
+      header: settingsQuery.data?.receiptHeader ?? "Sedyo Makmur Motor",
+      address: settingsQuery.data?.address,
+      phone: settingsQuery.data?.phone,
+      transactionNumber: t.transactionNumber,
+      dateStr: t.transactionDate.toDate().toLocaleString("id-ID"),
+      cashierName: t.cashierName,
+      customerName: t.customerName,
+      vehiclePlate: t.vehiclePlate,
+      vehicleType: t.vehicleType,
+      mechanicName: t.mechanicName,
+      items: t.items,
+      total: t.total,
+      payment: t.payment,
+      change: t.change,
+      paymentMethod: t.paymentMethod,
+      footer: settingsQuery.data?.receiptFooter ?? "Terima kasih atas kunjungan Anda",
+    });
+  }
+
+  async function bluetoothReprint(t: Transaction) {
+    setPrinting(true);
+    setPrintMsg(null);
+    try {
+      await printTextViaBluetooth(selectedReceiptText(t));
+      setPrintMsg("Terkirim ke printer Bluetooth.");
+    } catch (err) {
+      setPrintMsg(err instanceof Error ? err.message : "Bluetooth gagal.");
+    } finally {
+      setPrinting(false);
+    }
+  }
 
   const listQuery = useInfiniteQuery({
     queryKey: ["transactions", applied],
@@ -266,18 +304,36 @@ export function TransactionsPage() {
               </div>
             </div>
 
-            <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-              <Button variant="secondary" className="flex-1" onClick={() => window.print()}>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <Button variant="secondary" onClick={() => window.print()}>
                 <Printer className="h-4 w-4" />
                 Print Ulang
               </Button>
+              <Button variant="secondary" disabled={printing} onClick={() => void bluetoothReprint(selected)}>
+                {printing ? "Mengirim..." : "Bluetooth"}
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  void navigator.clipboard.writeText(selectedReceiptText(selected)).then(
+                    () => setPrintMsg("Struk disalin — tempel ke RawBT."),
+                    () => setPrintMsg("Gagal menyalin. Pakai Unduh .txt."),
+                  );
+                }}
+              >
+                Salin Teks
+              </Button>
+              <Button variant="secondary" onClick={() => downloadTextFile(`${selected.transactionNumber}.txt`, selectedReceiptText(selected))}>
+                Unduh .txt
+              </Button>
               {canDelete && selected.status === "completed" && !confirmDelete && (
-                <Button variant="destructive" className="flex-1" onClick={() => setConfirmDelete(true)}>
+                <Button variant="destructive" className="col-span-2" onClick={() => setConfirmDelete(true)}>
                   <Trash2 className="h-4 w-4" />
                   Hapus Transaksi
                 </Button>
               )}
             </div>
+            {printMsg && <p className="mt-2 text-xs text-muted">{printMsg}</p>}
             {confirmDelete && (
               <div className="mt-4 rounded-xl border border-danger/40 bg-danger/5 p-4 text-sm">
                 <p className="font-bold">Hapus transaksi?</p>
@@ -301,8 +357,9 @@ export function TransactionsPage() {
               </div>
             )}
         <div className="print-only">
-          <p className="font-bold">Sedyo Makmur Motor</p>
-          <p>Struk Transaksi</p>
+          <p className="font-bold">{settingsQuery.data?.receiptHeader ?? "Sedyo Makmur Motor"}</p>
+          {settingsQuery.data?.address && <p>{settingsQuery.data.address}</p>}
+          {settingsQuery.data?.phone && <p>{settingsQuery.data.phone}</p>}
           <p>------------------------------</p>
           <p>{selected.transactionNumber}</p>
           <p>Kasir: {selected.cashierName}</p>
@@ -324,7 +381,7 @@ export function TransactionsPage() {
           <p>Kembali: Rp{selected.change.toLocaleString("id-ID")}</p>
           <p>Metode: {selected.paymentMethod}</p>
           <p>------------------------------</p>
-          <p>Terima kasih atas kunjungan Anda</p>
+          <p>{settingsQuery.data?.receiptFooter ?? "Terima kasih atas kunjungan Anda"}</p>
         </div>
           </div>
         </div>
