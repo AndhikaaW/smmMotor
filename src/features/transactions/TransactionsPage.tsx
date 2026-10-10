@@ -49,6 +49,7 @@ export function TransactionsPage() {
   const [printMsg, setPrintMsg] = useState<string | null>(null);
   const [printing, setPrinting] = useState(false);
   const [btPreview, setBtPreview] = useState(false);
+  const [btCompatible, setBtCompatible] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editItems, setEditItems] = useState<CartItem[]>([]);
   const [editMethod, setEditMethod] = useState<PaymentMethod>("cash");
@@ -91,8 +92,8 @@ export function TransactionsPage() {
     setPrinting(true);
     setPrintMsg(null);
     try {
-      await printTextViaBluetooth(selectedReceiptData(t));
-      setPrintMsg("Terkirim ke printer Bluetooth.");
+      const r = await printTextViaBluetooth(selectedReceiptData(t), { compatible: btCompatible });
+      setPrintMsg(`Terkirim ${r.bytes} byte ke ${r.deviceName}. Kertas tidak keluar? Aktifkan Mode kompatibel lalu cetak ulang, atau Salin ke RawBT ya.`);
     } catch (err) {
       setPrintMsg(friendlyError(err, "Gagal cetak via Bluetooth. Pakai tombol Salin lalu cetak dari RawBT ya."));
     } finally {
@@ -466,6 +467,8 @@ export function TransactionsPage() {
                 text={selectedReceiptText(selected)}
                 printing={printing}
                 printMsg={printMsg}
+                compatible={btCompatible}
+                onCompatibleChange={setBtCompatible}
                 onClose={() => setBtPreview(false)}
                 onConfirm={() => void bluetoothReprint(selected)}
               />

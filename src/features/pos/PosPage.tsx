@@ -75,6 +75,7 @@ export function PosPage() {
   const [printMsg, setPrintMsg] = useState<string | null>(null);
   const [printing, setPrinting] = useState(false);
   const [btPreview, setBtPreview] = useState(false);
+  const [btCompatible, setBtCompatible] = useState(false);
   const [unknownBarcode, setUnknownBarcode] = useState<string | null>(null);
   const [manualOpen, setManualOpen] = useState(false);
   const [serviceOpen, setServiceOpen] = useState(false);
@@ -441,8 +442,8 @@ export function PosPage() {
     setPrinting(true);
     setPrintMsg(null);
     try {
-      await printTextViaBluetooth(d);
-      setPrintMsg("Terkirim ke printer Bluetooth.");
+      const r = await printTextViaBluetooth(d, { compatible: btCompatible });
+      setPrintMsg(`Terkirim ${r.bytes} byte ke ${r.deviceName}. Kertas tidak keluar? Aktifkan Mode kompatibel lalu cetak ulang, atau Salin ke RawBT ya.`);
     } catch (err) {
       setPrintMsg(friendlyError(err, "Gagal cetak via Bluetooth. Pakai tombol Salin lalu cetak dari RawBT ya."));
     } finally {
@@ -503,6 +504,8 @@ export function PosPage() {
           text={receiptText()}
           printing={printing}
           printMsg={printMsg}
+          compatible={btCompatible}
+          onCompatibleChange={setBtCompatible}
           onClose={() => setBtPreview(false)}
           onConfirm={() => void bluetoothReceipt()}
         />

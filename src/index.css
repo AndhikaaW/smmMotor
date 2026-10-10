@@ -46,6 +46,7 @@ body {
   line-height: 1.45;
   color: #000;
   background: #fff;
+  padding-bottom: 6mm;
 }
 .receipt-top {
   display: flex;

@@ -12,6 +12,8 @@ export function BluetoothPreviewDialog({
   text,
   printing,
   printMsg,
+  compatible,
+  onCompatibleChange,
   onClose,
   onConfirm,
 }: {
@@ -21,6 +23,8 @@ export function BluetoothPreviewDialog({
   text: string;
   printing: boolean;
   printMsg: string | null;
+  compatible: boolean;
+  onCompatibleChange: (v: boolean) => void;
   onClose: () => void;
   onConfirm: () => void;
 }) {
@@ -46,6 +50,15 @@ export function BluetoothPreviewDialog({
         )}
         <pre className="receipt-preview-text mt-3">{text}</pre>
         {printMsg && <p className="mt-2 text-xs text-muted">{printMsg}</p>}
+        <label className="mt-3 flex cursor-pointer items-start gap-2 text-xs text-muted">
+          <input
+            type="checkbox"
+            checked={compatible}
+            onChange={(e) => onCompatibleChange(e.target.checked)}
+            className="mt-0.5"
+          />
+          <span>Mode kompatibel (kertas keluar tapi kosong / printer lama: teks polos tanpa logo & barcode grafis).</span>
+        </label>
         <div className="mt-4 grid grid-cols-2 gap-2">
           <Button variant="secondary" onClick={onClose}>
             Koreksi Dulu
