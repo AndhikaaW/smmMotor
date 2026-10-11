@@ -53,17 +53,10 @@ export function formatReceiptDate(d: Date): string {
   return `${p(d.getDate())}-${p(d.getMonth() + 1)}-${d.getFullYear()}, ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-// 58mm = 32 kolom ; 80mm = 48 kolom. Default 58 (printer user RPP02 58mm).
-const SEP_SINGLE_58 = "--------------------------------";
-const SEP_DOUBLE_58 = "================================";
-const SEP_SINGLE_80 = "------------------------------------------------";
-const SEP_DOUBLE_80 = "================================================";
-const COLS_58 = 32;
-const COLS_80 = 48;
-// Alias aktif: 58mm (printer user). Ganti ke _80 bila settings paperSize 80.
-const COLS = COLS_58;
-const SEP_SINGLE = SEP_SINGLE_58;
-const SEP_DOUBLE = SEP_DOUBLE_58;
+// 58mm = 32 kolom (printer user RPP02 58mm).
+const COLS = 32;
+const SEP_SINGLE = "--------------------------------";
+const SEP_DOUBLE = "================================";
 
 function idr(n: number): string {
   return n.toLocaleString("id-ID");
