@@ -66,11 +66,11 @@ export function friendlyError(err: unknown, fallback: string): string {
     return fallback;
   }
 
-  // 1b. Konteks cetak (fallback menyebut printer/cetak/USB/Bluetooth):
+  // 1b. Konteks cetak (fallback menyebut printer/cetak/USB/Bluetooth/serial):
   // JANGAN pernah dipetakan ke "Internet bermasalah". Kemarin Access denied
   // + GATT NetworkError ketelan mapping network. Batal pilih -> pesan batal,
   // selain itu -> pesan custom / fallback printer.
-  if (/cetak|printer|usb|bluetooth|gatt|rpp02|xprinter/i.test(fallback)) {
+  if (/cetak|printer|usb|bluetooth|gatt|rpp02|xprinter|serial|classic/i.test(fallback)) {
     const raw = msgOf(err);
     const name = nameOf(err);
     const t = `${name} ${raw}`.toLowerCase();

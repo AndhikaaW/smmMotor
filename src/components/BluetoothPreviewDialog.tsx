@@ -3,7 +3,8 @@ import { ReceiptPrint } from "@/components/ReceiptPrint";
 import type { ReceiptDataInput } from "@/lib/receipt";
 
 /** Preview sebelum cetak: atas = hasil kertas (logo raster + center/bold/barcode).
- * Berlaku untuk Bluetooth DAN USB — payload bytes-nya SAMA (buildReceiptEscPos).
+ * Berlaku untuk Bluetooth BLE, BT Classic serial, DAN USB — payload bytes-nya
+ * SAMA (buildReceiptEscPos).
  * Bawah = teks fallback untuk Salin/Unduh/RawBT, bukan yang dikirim tombol cetak. */
 export function BluetoothPreviewDialog({
   open,
@@ -26,7 +27,7 @@ export function BluetoothPreviewDialog({
   compatible: boolean;
   onCompatibleChange: (v: boolean) => void;
   onClose: () => void;
-  onConfirm: (via: "bluetooth" | "usb") => void;
+  onConfirm: (via: "bluetooth" | "usb" | "serial") => void;
 }) {
   if (!open) return null;
   return (
@@ -75,6 +76,13 @@ export function BluetoothPreviewDialog({
           </Button>
           <Button disabled={printing || !text} onClick={() => onConfirm("bluetooth")}>
             {printing ? "Mengirim..." : "Cetak Bluetooth"}
+          </Button>
+          <Button
+            className="col-span-2"
+            disabled={printing || !text}
+            onClick={() => onConfirm("serial")}
+          >
+            {printing ? "Mengirim..." : "Cetak BT Classic (RPP02 laptop)"}
           </Button>
           <Button
             variant="secondary"

@@ -17,7 +17,7 @@ import { QuickAddServiceDialog } from "@/features/pos/QuickAddServiceDialog";
 import { listServices, updateService } from "@/lib/firestore/services";
 import { getGeneralSettings } from "@/lib/firestore/settings";
 import { checkout } from "@/lib/firestore/transactions";
-import { barcodeValueOf, buildReceiptText, downloadTextFile, formatReceiptDate, printTextViaBluetooth, printTextViaUsb, shortNumberOf, type ReceiptDataInput } from "@/lib/receipt";
+import { barcodeValueOf, buildReceiptText, downloadTextFile, formatReceiptDate, printTextViaBluetooth, printTextViaSerial, printTextViaUsb, shortNumberOf, type ReceiptDataInput } from "@/lib/receipt";
 import { ReceiptPrint } from "@/components/ReceiptPrint";
 import { BluetoothPreviewDialog } from "@/components/BluetoothPreviewDialog";
 import { loadHeldCarts, MAX_HELD, newHeldId, saveHeldCarts, type HeldCart } from "@/lib/posHeld";
@@ -433,7 +433,7 @@ export function PosPage() {
     }
   }
 
-  async function bluetoothReceipt(via: "bluetooth" | "usb") {
+  async function bluetoothReceipt(via: "bluetooth" | "usb" | "serial") {
     const d = receiptData();
     if (!d) {
       setPrintMsg("Data struk belum siap. Coba lagi ya.");
@@ -444,11 +444,13 @@ export function PosPage() {
     try {
       const r = via === "usb"
         ? await printTextViaUsb(d, { compatible: btCompatible })
-        : await printTextViaBluetooth(d, { compatible: btCompatible });
-      const jalur = r.transport === "usb" ? "USB" : "Bluetooth";
+        : via === "serial"
+          ? await printTextViaSerial(d, { compatible: btCompatible })
+          : await printTextViaBluetooth(d, { compatible: btCompatible });
+      const jalur = r.transport === "usb" ? "USB" : r.transport === "serial" ? "BT Classic" : "Bluetooth";
       setPrintMsg(`Terkirim ${r.bytes} byte via ${jalur} ke ${r.deviceName}. Kertas tidak keluar? Aktifkan Mode kompatibel lalu cetak ulang, atau Salin ke RawBT ya.`);
     } catch (err) {
-      setPrintMsg(friendlyError(err, via === "usb" ? "Gagal cetak via USB. Cek kabel + driver Xprinter, atau pakai Cetak Struk ya." : "Gagal cetak via Bluetooth. Pakai tombol Salin lalu cetak dari RawBT ya."));
+      setPrintMsg(friendlyError(err, via === "usb" ? "Gagal cetak via USB. Cek kabel + driver Xprinter, atau pakai Cetak Struk ya." : via === "serial" ? "Gagal cetak via BT Classic serial. Pilih RPP02 - Paired lalu coba lagi ya." : "Gagal cetak via Bluetooth. Pakai tombol Salin lalu cetak dari RawBT ya."));
     } finally {
       setPrinting(false);
     }

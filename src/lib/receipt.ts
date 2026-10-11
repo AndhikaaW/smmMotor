@@ -304,10 +304,20 @@ export function downloadTextFile(filename: string, text: string) {
 export interface BluetoothPrintResult {
   deviceName: string;
   bytes: number;
-  /** "ble" | "usb" — tampil di pesan sukses agar user tahu jalur mana yang dipakai. */
-  transport: "ble" | "usb";
+  /** "ble" | "usb" | "serial" — tampil di pesan sukses agar user tahu jalur mana yang dipakai. */
+  transport: "ble" | "usb" | "serial";
   serviceUuid: string;
   charUuid: string;
+}
+
+// SPP Bluetooth classic (RFCOMM) — UUID standar Serial Port Profile.
+const SERIAL_SPP_UUID = "00001101-0000-1000-8000-00805f9b34fb";
+
+interface SerialPrinterPort {
+  open: (opts: { baudRate: number }) => Promise<void>;
+  close: () => Promise<void>;
+  readable?: ReadableStream | null;
+  writable?: WritableStream<BufferSource> | null;
 }
 
 interface BleChar {
@@ -523,6 +533,63 @@ export async function printTextViaUsb(
   } finally {
     try {
       await device.close();
+    } catch {
+      // abaikan: tutup agar print berikutnya tidak nyangkut
+    }
+  }
+}
+
+/** Cetak via Web Serial Bluetooth classic SPP (Chrome 117+ desktop).
+ * Untuk RPP02/EPPOS: Web Bluetooth = BLE saja -> GATT gagal; jalur ini
+ * pakai RFCOMM SPP yang muncul sebagai "RPP02 - Paired" di requestPort().
+ * Syarat: printer sudah Paired di Windows. Payload SAMA (buildReceiptEscPos). */
+export async function printTextViaSerial(
+  d: ReceiptDataInput,
+  opts?: { compatible?: boolean },
+): Promise<BluetoothPrintResult> {
+  const nav = navigator as unknown as {
+    serial?: {
+      requestPort: (opts?: { filters?: { bluetoothServiceClassId?: unknown }[] }) => Promise<SerialPrinterPort>;
+    };
+  };
+  if (!nav.serial)
+    throw new Error(
+      "Browser ini tidak dukung serial langsung (pakai Chrome desktop versi baru). Pakai Cetak Struk ya.",
+    );
+  const bytes = opts?.compatible
+    ? receiptTextToEscPos(buildReceiptText(d))
+    : buildReceiptEscPos(d, await loadLogoRaster());
+  let port: SerialPrinterPort;
+  try {
+    port = await nav.serial.requestPort({
+      filters: [{ bluetoothServiceClassId: SERIAL_SPP_UUID }],
+    });
+  } catch {
+    // Batal pilih -> pesan batal; Chrome lempar NotFoundError "No port selected".
+    throw new Error("Pemilihan printer dibatalkan. Klik lagi lalu pilih RPP02 - Paired ya.");
+  }
+  try {
+    await port.open({ baudRate: 9600 });
+  } catch {
+    throw new Error(
+      "Port RPP02 tidak bisa dibuka (dipakai aplikasi lain / belum paired). Tutup RawBT / aplikasi printer lain lalu coba lagi ya.",
+    );
+  }
+  try {
+    const writer = port.writable?.getWriter();
+    if (!writer) throw new Error("Port serial tidak bisa ditulis. Coba lagi ya.");
+    try {
+      for (let i = 0; i < bytes.length; i += 256) {
+        await writer.write(bytes.slice(i, i + 256) as unknown as BufferSource);
+        await new Promise<void>((r) => setTimeout(r, 15));
+      }
+    } finally {
+      writer.releaseLock();
+    }
+    return { deviceName: "RPP02-serial", bytes: bytes.length, transport: "serial", serviceUuid: "serial-spp", charUuid: "rfcomm" };
+  } finally {
+    try {
+      await port.close();
     } catch {
       // abaikan: tutup agar print berikutnya tidak nyangkut
     }
