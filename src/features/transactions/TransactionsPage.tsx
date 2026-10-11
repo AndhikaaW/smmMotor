@@ -13,7 +13,7 @@ import {
 } from "@/lib/firestore/transactions";
 import { searchProductsByName } from "@/lib/firestore/products";
 import { listServices } from "@/lib/firestore/services";
-import { barcodeValueOf, buildReceiptText, formatReceiptDate, printTextViaBluetooth, shortNumberOf, type ReceiptDataInput } from "@/lib/receipt";
+import { barcodeValueOf, buildReceiptText, formatReceiptDate, printTextViaBluetooth, printTextViaUsb, shortNumberOf, type ReceiptDataInput } from "@/lib/receipt";
 import { ReceiptPrint } from "@/components/ReceiptPrint";
 import { BluetoothPreviewDialog } from "@/components/BluetoothPreviewDialog";
 import { getGeneralSettings } from "@/lib/firestore/settings";
@@ -88,14 +88,17 @@ export function TransactionsPage() {
     return buildReceiptText(selectedReceiptData(t));
   }
 
-  async function bluetoothReprint(t: Transaction) {
+  async function bluetoothReprint(t: Transaction, via: "bluetooth" | "usb") {
     setPrinting(true);
     setPrintMsg(null);
     try {
-      const r = await printTextViaBluetooth(selectedReceiptData(t), { compatible: btCompatible });
-      setPrintMsg(`Terkirim ${r.bytes} byte ke ${r.deviceName}. Kertas tidak keluar? Aktifkan Mode kompatibel lalu cetak ulang, atau Salin ke RawBT ya.`);
+      const r = via === "usb"
+        ? await printTextViaUsb(selectedReceiptData(t), { compatible: btCompatible })
+        : await printTextViaBluetooth(selectedReceiptData(t), { compatible: btCompatible });
+      const jalur = r.transport === "usb" ? "USB" : "Bluetooth";
+      setPrintMsg(`Terkirim ${r.bytes} byte via ${jalur} ke ${r.deviceName}. Kertas tidak keluar? Aktifkan Mode kompatibel lalu cetak ulang, atau Salin ke RawBT ya.`);
     } catch (err) {
-      setPrintMsg(friendlyError(err, "Gagal cetak via Bluetooth. Pakai tombol Salin lalu cetak dari RawBT ya."));
+      setPrintMsg(friendlyError(err, via === "usb" ? "Gagal cetak via USB. Cek kabel + driver Xprinter, atau pakai Cetak Struk ya." : "Gagal cetak via Bluetooth. Pakai tombol Salin lalu cetak dari RawBT ya."));
     } finally {
       setPrinting(false);
     }
@@ -470,7 +473,7 @@ export function TransactionsPage() {
                 compatible={btCompatible}
                 onCompatibleChange={setBtCompatible}
                 onClose={() => setBtPreview(false)}
-                onConfirm={() => void bluetoothReprint(selected)}
+                onConfirm={(via) => void bluetoothReprint(selected, via)}
               />
             )}
             {confirmDelete && (

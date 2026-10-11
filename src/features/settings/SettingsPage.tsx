@@ -40,7 +40,7 @@ export function SettingsPage() {
 
   const [form, setForm] = useState<SettingsInput>({
     ...generalSettingsSeed,
-    paperSize: (generalSettingsSeed.paperSize ?? "80") as "58" | "80",
+    paperSize: (generalSettingsSeed.paperSize ?? "58") as "58" | "80",
     paymentMethods: [...generalSettingsSeed.paymentMethods] as PaymentMethod[],
   });
   const [saved, setSaved] = useState(false);
@@ -55,7 +55,7 @@ export function SettingsPage() {
         email: settingsQuery.data.email ?? "",
         receiptHeader: settingsQuery.data.receiptHeader ?? "",
         receiptFooter: settingsQuery.data.receiptFooter ?? "",
-        paperSize: settingsQuery.data.paperSize ?? "80",
+        paperSize: settingsQuery.data.paperSize ?? "58",
         paymentMethods: settingsQuery.data.paymentMethods ?? ["cash"],
       });
     }

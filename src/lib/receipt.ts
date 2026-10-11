@@ -1,7 +1,8 @@
-// Template struk SMM — print ulang (HTML/ReceiptPrint) & Bluetooth (ESC/POS) satu sumber.
+// Template struk SMM — print ulang (HTML/ReceiptPrint) & Bluetooth/USB (ESC/POS) satu sumber.
 // Urutan: Tanggal (tanpa kode) > garis > logo + toko CENTER > Pelanggan > garis tebal >
 //   item (nama bold, qty kiri + subtotal kanan) > garis > Total/Dibayar/Kembalian >
-//   Hormat kami (kanan, underline) > barcode grafis + 1 baris kode > footer > jeda bawah > potong.
+//   barcode grafis + 1 baris kode > footer > jeda bawah > potong.
+// Hormat kami SUDAH DIHAPUS (permintaan user) — jangan tambah lagi di template mana pun.
 // Jeda bawah sedikit: 2 feed + cut (dulu 3 feed = blank panjang seperti foto user).
 // Center BT: teks TRIM + perintah ALIGN_C printer (tanpa spasi pad dobel yang
 // bikin header miring kanan).
@@ -52,9 +53,17 @@ export function formatReceiptDate(d: Date): string {
   return `${p(d.getDate())}-${p(d.getMonth() + 1)}-${d.getFullYear()}, ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-const SEP_SINGLE = "--------------------------------";
-const SEP_DOUBLE = "================================";
-const COLS = 32;
+// 58mm = 32 kolom ; 80mm = 48 kolom. Default 58 (printer user RPP02 58mm).
+const SEP_SINGLE_58 = "--------------------------------";
+const SEP_DOUBLE_58 = "================================";
+const SEP_SINGLE_80 = "------------------------------------------------";
+const SEP_DOUBLE_80 = "================================================";
+const COLS_58 = 32;
+const COLS_80 = 48;
+// Alias aktif: 58mm (printer user). Ganti ke _80 bila settings paperSize 80.
+const COLS = COLS_58;
+const SEP_SINGLE = SEP_SINGLE_58;
+const SEP_DOUBLE = SEP_DOUBLE_58;
 
 function idr(n: number): string {
   return n.toLocaleString("id-ID");
@@ -135,7 +144,6 @@ function receiptLines(d: ReceiptDataInput): string[] {
     ...leftRight(`Total (${totalQty} Items) :`, idr(d.total)),
     ...leftRight("Dibayar :", idr(d.payment)),
     ...leftRight("Kembalian :", idr(d.change)),
-    "Hormat kami".padStart(COLS),
     ...centered(`*${d.barcodeValue}*`),
   );
   if (d.footer) lines.push(...wrapWords(d.footer, COLS));
@@ -151,8 +159,9 @@ function enc(s: string): number[] {
   return [...new TextEncoder().encode(ascii(s))];
 }
 
-/** Logo smm.png -> raster 1-bit ESC/POS (GS v 0), center. Gagal => null (lanjut teks saja). */
-export async function loadLogoRaster(maxWidth = 176): Promise<Uint8Array | null> {
+/** Logo smm.png -> raster 1-bit ESC/POS (GS v 0), center. Gagal => null (lanjut teks saja).
+ * Target 384 dot = lebar cetak 58mm @8dot/mm (RPP02 user). */
+export async function loadLogoRaster(maxWidth = 384, maxHeight = 200): Promise<Uint8Array | null> {
   try {
     const img = new Image();
     img.src = RECEIPT_LOGO_SRC;
@@ -161,9 +170,11 @@ export async function loadLogoRaster(maxWidth = 176): Promise<Uint8Array | null>
       img.onerror = () => reject(new Error("logo"));
       setTimeout(() => reject(new Error("logo")), 4000);
     });
-    const scale = Math.min(1, maxWidth / img.naturalWidth);
-    const w = Math.max(8, Math.floor(img.naturalWidth * scale));
-    const h = Math.max(8, Math.floor(img.naturalHeight * scale));
+    const nw = img.naturalWidth || maxWidth;
+    const nh = img.naturalHeight || 64;
+    const scale = Math.min(maxWidth / nw, maxHeight / nh, 4);
+    const w = Math.max(8, Math.floor(nw * scale));
+    const h = Math.max(8, Math.floor(nh * scale));
     const canvas = document.createElement("canvas");
     canvas.width = w;
     canvas.height = h;
@@ -204,11 +215,8 @@ export async function loadLogoRaster(maxWidth = 176): Promise<Uint8Array | null>
 export function buildReceiptEscPos(d: ReceiptDataInput, logo?: Uint8Array | null): Uint8Array {
   const ALIGN_L = [0x1b, 0x61, 0x00];
   const ALIGN_C = [0x1b, 0x61, 0x01];
-  const ALIGN_R = [0x1b, 0x61, 0x02];
   const B_ON = [0x1b, 0x45, 0x01];
   const B_OFF = [0x1b, 0x45, 0x00];
-  const U_ON = [0x1b, 0x2d, 0x01];
-  const U_OFF = [0x1b, 0x2d, 0x00];
   const totalQty = d.items.reduce((s, i) => s + i.quantity, 0);
   const customer = d.customerLine?.trim() ? d.customerLine.trim() : "-";
 
@@ -257,12 +265,6 @@ export function buildReceiptEscPos(d: ReceiptDataInput, logo?: Uint8Array | null
   for (const l of leftRight("Dibayar :", idr(d.payment))) textLine(l);
   for (const l of leftRight("Kembalian :", idr(d.change))) textLine(l);
 
-  // Hormat kami: kanan + underline seperti preview atas.
-  // Dulu textLine("") kosong — teksnya hilang di kertas.
-  push(...ALIGN_R, ...U_ON);
-  textLine("Hormat kami");
-  push(...U_OFF);
-
   // Barcode Code128: SATU label saja (HRI di bawah grafis, via GS H 2).
   // Mode normal andalkan HRI printer; mode kompatibel (teks polos) bawa *BV*
   // sebagai fallback bila firmware clone mengabaikan perintah GS k.
@@ -309,6 +311,8 @@ export function downloadTextFile(filename: string, text: string) {
 export interface BluetoothPrintResult {
   deviceName: string;
   bytes: number;
+  /** "ble" | "usb" — tampil di pesan sukses agar user tahu jalur mana yang dipakai. */
+  transport: "ble" | "usb";
   serviceUuid: string;
   charUuid: string;
 }
@@ -362,7 +366,14 @@ async function sendBytesToPrinter(data: Uint8Array): Promise<BluetoothPrintResul
       "0000ffe5-0000-1000-8000-00805f9b34fb",
     ],
   });
-  const server = await device.gatt?.connect();
+  let server: BleServer | undefined;
+  try {
+    server = await device.gatt?.connect();
+  } catch {
+    throw new Error(
+      "Printer ini Bluetooth classic (RPP02/EPPOS), tidak bisa cetak langsung dari browser laptop (laptop hanya BLE). Pakai Cetak USB kabel / Cetak Struk driver Windows, atau cetak dari HP via RawBT ya.",
+    );
+  }
   if (!server)
     throw new Error(
       "Gagal tersambung ke printer. Dekatkan printer lalu coba lagi, atau cetak via RawBT ya.",
@@ -371,7 +382,15 @@ async function sendBytesToPrinter(data: Uint8Array): Promise<BluetoothPrintResul
     // Kumpulkan SEMUA characteristic writable dulu, lalu pilih skor tertinggi.
     // Dulu: first-match -> sering nyasar ke battery/device-info (write OK, kertas diam).
     const candidates: { svcUuid: string; ch: BleChar; score: number; noResp: boolean }[] = [];
-    for (const svc of await server.getPrimaryServices()) {
+    let services: BleService[];
+    try {
+      services = await server.getPrimaryServices();
+    } catch {
+      throw new Error(
+        "Printer ini Bluetooth classic (RPP02/EPPOS), tidak bisa cetak langsung dari browser laptop (laptop hanya BLE). Pakai Cetak USB kabel / Cetak Struk driver Windows, atau cetak dari HP via RawBT ya.",
+      );
+    }
+    for (const svc of services) {
       const svcUuid = svc.uuid ?? "?";
       for (const ch of await svc.getCharacteristics()) {
         const noResp = !!ch.properties?.writeWithoutResponse || !!ch.writeValueWithoutResponse;
@@ -403,6 +422,7 @@ async function sendBytesToPrinter(data: Uint8Array): Promise<BluetoothPrintResul
     return {
       deviceName: device.name ?? "printer",
       bytes: data.length,
+      transport: "ble",
       serviceUuid: best.svcUuid,
       charUuid: best.ch.uuid ?? "?",
     };
@@ -411,6 +431,107 @@ async function sendBytesToPrinter(data: Uint8Array): Promise<BluetoothPrintResul
       server.disconnect?.();
     } catch {
       // abaikan: putus agar print berikutnya tidak nyangkut
+    }
+  }
+}
+
+interface UsbOutEndpoint {
+  endpointNumber: number;
+  direction?: string;
+}
+
+interface UsbInterface {
+  interfaceNumber: number;
+  alternate?: { endpoints?: UsbOutEndpoint[] };
+  alternates?: { endpoints?: UsbOutEndpoint[] }[];
+}
+
+interface UsbConfig {
+  interfaces?: UsbInterface[];
+}
+
+interface UsbPrinterDevice {
+  productName?: string;
+  manufacturerName?: string;
+  opened?: boolean;
+  configuration?: UsbConfig | null;
+  open: () => Promise<void>;
+  close: () => Promise<void>;
+  selectConfiguration: (v: number) => Promise<void>;
+  claimInterface: (n: number) => Promise<void>;
+  selectAlternateInterface: (iface: number, setting: number) => Promise<void>;
+  transferOut: (ep: number, data: BufferSource) => Promise<unknown>;
+}
+
+/** Cetak via WebUSB (Chrome desktop, HTTPS, via gesture) — untuk XP-80C kabel.
+ * Payload SAMA dengan Bluetooth: buildReceiptEscPos. Endpoint OUT bulk printer
+ * dicari otomatis (interface kelas printer 7 bila ada). */
+export async function printTextViaUsb(
+  d: ReceiptDataInput,
+  opts?: { compatible?: boolean },
+): Promise<BluetoothPrintResult> {
+  const nav = navigator as unknown as {
+    usb?: { requestDevice: (opts: { filters: unknown[] }) => Promise<UsbPrinterDevice> };
+  };
+  if (!nav.usb)
+    throw new Error(
+      "Browser ini tidak dukung USB langsung (pakai Chrome desktop + HTTPS). Pakai Cetak Struk / Bluetooth ya.",
+    );
+  const bytes = opts?.compatible
+    ? receiptTextToEscPos(buildReceiptText(d))
+    : buildReceiptEscPos(d, await loadLogoRaster());
+  const device = await nav.usb.requestDevice({ filters: [] });
+  const name = device.productName || device.manufacturerName || "printer-usb";
+  try {
+    try {
+      await device.open();
+    } catch {
+      throw new Error(
+        "USB ditolak Windows (Access denied): port printer dikunci driver (di Settings tampil RPP02 / Driver unavailable). Tutup dialog ini lalu pakai tombol Cetak Struk — pilih Xprinter/RPP02 di dialog print Windows ya.",
+      );
+    }
+    if (!device.configuration) await device.selectConfiguration(1);
+    // Cari interface printer: klaim yang punya endpoint OUT (bulk).
+    const ifaces = device.configuration?.interfaces ?? [];
+    let claimed = -1;
+    let ep = -1;
+    for (const iface of ifaces) {
+      const alts = iface.alternates ?? (iface.alternate ? [iface.alternate] : []);
+      for (const alt of alts) {
+        const out = (alt.endpoints ?? []).find(
+          (e) => e.direction === "out" || e.direction === undefined,
+        );
+        if (out) {
+          try {
+            await device.claimInterface(iface.interfaceNumber);
+            try {
+              await device.selectAlternateInterface(iface.interfaceNumber, 0);
+            } catch {
+              // abaikan: sebagian printer tak perlu select alternate
+            }
+            claimed = iface.interfaceNumber;
+            ep = out.endpointNumber;
+            break;
+          } catch {
+            // interface dipakai OS/driver lain — coba interface berikut
+          }
+        }
+      }
+      if (claimed >= 0) break;
+    }
+    if (claimed < 0 || ep < 0)
+      throw new Error(
+        "Printer USB ketemu tapi endpoint cetaknya tak bisa dipakai (biasanya dikunci driver Windows). Pakai Cetak Struk (driver Xprinter) atau Bluetooth ya.",
+      );
+    for (let i = 0; i < bytes.length; i += 512) {
+      await device.transferOut(ep, bytes.slice(i, i + 512) as unknown as BufferSource);
+    }
+    return { deviceName: name, bytes: bytes.length, transport: "usb", serviceUuid: "usb", charUuid: `ep-${ep}` };
+  } finally {
+    try {
+      await device.close();
+    } catch {
+      // abaikan: tutup agar print berikutnya tidak nyangkut
     }
   }
 }

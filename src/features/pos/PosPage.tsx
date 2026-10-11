@@ -17,7 +17,7 @@ import { QuickAddServiceDialog } from "@/features/pos/QuickAddServiceDialog";
 import { listServices, updateService } from "@/lib/firestore/services";
 import { getGeneralSettings } from "@/lib/firestore/settings";
 import { checkout } from "@/lib/firestore/transactions";
-import { barcodeValueOf, buildReceiptText, downloadTextFile, formatReceiptDate, printTextViaBluetooth, shortNumberOf, type ReceiptDataInput } from "@/lib/receipt";
+import { barcodeValueOf, buildReceiptText, downloadTextFile, formatReceiptDate, printTextViaBluetooth, printTextViaUsb, shortNumberOf, type ReceiptDataInput } from "@/lib/receipt";
 import { ReceiptPrint } from "@/components/ReceiptPrint";
 import { BluetoothPreviewDialog } from "@/components/BluetoothPreviewDialog";
 import { loadHeldCarts, MAX_HELD, newHeldId, saveHeldCarts, type HeldCart } from "@/lib/posHeld";
@@ -389,7 +389,7 @@ export function PosPage() {
   const searchedProducts = activeProducts;
 
   useEffect(() => {
-    const size = settingsQuery.data?.paperSize ?? "80";
+    const size = settingsQuery.data?.paperSize ?? "58";
     document.body.classList.toggle("paper-58", size === "58");
     return () => document.body.classList.remove("paper-58");
   }, [settingsQuery.data?.paperSize]);
@@ -433,7 +433,7 @@ export function PosPage() {
     }
   }
 
-  async function bluetoothReceipt() {
+  async function bluetoothReceipt(via: "bluetooth" | "usb") {
     const d = receiptData();
     if (!d) {
       setPrintMsg("Data struk belum siap. Coba lagi ya.");
@@ -442,10 +442,13 @@ export function PosPage() {
     setPrinting(true);
     setPrintMsg(null);
     try {
-      const r = await printTextViaBluetooth(d, { compatible: btCompatible });
-      setPrintMsg(`Terkirim ${r.bytes} byte ke ${r.deviceName}. Kertas tidak keluar? Aktifkan Mode kompatibel lalu cetak ulang, atau Salin ke RawBT ya.`);
+      const r = via === "usb"
+        ? await printTextViaUsb(d, { compatible: btCompatible })
+        : await printTextViaBluetooth(d, { compatible: btCompatible });
+      const jalur = r.transport === "usb" ? "USB" : "Bluetooth";
+      setPrintMsg(`Terkirim ${r.bytes} byte via ${jalur} ke ${r.deviceName}. Kertas tidak keluar? Aktifkan Mode kompatibel lalu cetak ulang, atau Salin ke RawBT ya.`);
     } catch (err) {
-      setPrintMsg(friendlyError(err, "Gagal cetak via Bluetooth. Pakai tombol Salin lalu cetak dari RawBT ya."));
+      setPrintMsg(friendlyError(err, via === "usb" ? "Gagal cetak via USB. Cek kabel + driver Xprinter, atau pakai Cetak Struk ya." : "Gagal cetak via Bluetooth. Pakai tombol Salin lalu cetak dari RawBT ya."));
     } finally {
       setPrinting(false);
     }
@@ -507,7 +510,7 @@ export function PosPage() {
           compatible={btCompatible}
           onCompatibleChange={setBtCompatible}
           onClose={() => setBtPreview(false)}
-          onConfirm={() => void bluetoothReceipt()}
+          onConfirm={(via) => void bluetoothReceipt(via)}
         />
         <div className="print-only mt-6">
           {receiptData() && <ReceiptPrint d={receiptData()!} />}

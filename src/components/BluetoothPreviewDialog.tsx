@@ -2,9 +2,9 @@ import { Button } from "@/components/ui/button";
 import { ReceiptPrint } from "@/components/ReceiptPrint";
 import type { ReceiptDataInput } from "@/lib/receipt";
 
-/** Preview sebelum cetak Bluetooth: atas = hasil kertas (yang dikirim ke printer:
- * logo raster + perintah center/bold/underline/barcode). Bawah = teks fallback
- * untuk Salin/Unduh/RawBT, bukan yang dicetak tombol Bluetooth. */
+/** Preview sebelum cetak: atas = hasil kertas (logo raster + center/bold/barcode).
+ * Berlaku untuk Bluetooth DAN USB — payload bytes-nya SAMA (buildReceiptEscPos).
+ * Bawah = teks fallback untuk Salin/Unduh/RawBT, bukan yang dikirim tombol cetak. */
 export function BluetoothPreviewDialog({
   open,
   title,
@@ -26,7 +26,7 @@ export function BluetoothPreviewDialog({
   compatible: boolean;
   onCompatibleChange: (v: boolean) => void;
   onClose: () => void;
-  onConfirm: () => void;
+  onConfirm: (via: "bluetooth" | "usb") => void;
 }) {
   if (!open) return null;
   return (
@@ -49,7 +49,17 @@ export function BluetoothPreviewDialog({
           </div>
         )}
         <pre className="receipt-preview-text mt-3">{text}</pre>
-        {printMsg && <p className="mt-2 text-xs text-muted">{printMsg}</p>}
+        {printMsg && (
+          <p
+            className={
+              /gagal|ditolak|dikunci|tidak|unavailable|denied/i.test(printMsg)
+                ? "mt-2 rounded-lg border border-danger/40 bg-danger/5 p-2 text-xs text-danger"
+                : "mt-2 text-xs text-muted"
+            }
+          >
+            {printMsg}
+          </p>
+        )}
         <label className="mt-3 flex cursor-pointer items-start gap-2 text-xs text-muted">
           <input
             type="checkbox"
@@ -63,8 +73,16 @@ export function BluetoothPreviewDialog({
           <Button variant="secondary" onClick={onClose}>
             Koreksi Dulu
           </Button>
-          <Button disabled={printing || !text} onClick={onConfirm}>
-            {printing ? "Mengirim..." : "Cetak Sekarang"}
+          <Button disabled={printing || !text} onClick={() => onConfirm("bluetooth")}>
+            {printing ? "Mengirim..." : "Cetak Bluetooth"}
+          </Button>
+          <Button
+            variant="secondary"
+            className="col-span-2"
+            disabled={printing || !text}
+            onClick={() => onConfirm("usb")}
+          >
+            {printing ? "Mengirim..." : "Cetak USB (XP-80C kabel)"}
           </Button>
         </div>
       </div>

@@ -17,12 +17,72 @@ function msgOf(err: unknown): string {
   return typeof m === "string" ? m : "";
 }
 
+function nameOf(err: unknown): string {
+  const n = (err as { name?: unknown })?.name;
+  return typeof n === "string" ? n : "";
+}
+
+/** Varian cetak: JANGAN pernah mapping ke "Internet bermasalah".
+ * Batal pilih -> pesan batal, GATT/BLE gagal -> pesan classic-vs-BLE,
+ * selain itu teruskan raw/fallback apa adanya. */
+function technicalToLaymanPrinter(raw: string, fallback: string): string {
+  const t = raw.toLowerCase();
+  if (
+    t.includes("no device") ||
+    t.includes("no device selected") ||
+    t.includes("aborted") ||
+    t.includes("cancelled") ||
+    t.includes("canceled") ||
+    t.includes("user cancell") ||
+    (t.includes("cancel") && t.includes("device")) ||
+    t.includes("notfound") ||
+    (t.includes("not found") && t.includes("device"))
+  )
+    return "Pemilihan printer dibatalkan. Klik lagi lalu pilih printernya ya.";
+  // Web Bluetooth laptop = BLE GATT saja. Printer struk murah (RPP02/EPPOS/
+  // Xprinter) = Bluetooth classic SPP -> connect/GATT pasti gagal dengan
+  // pesan "GATT Server is disconnected / cannot retrieve services".
+  // Bukan salah internet / kode: keterbatasan platform. Arahkan ke jalur benar.
+  if (
+    t.includes("gatt") ||
+    t.includes("retrieve services") ||
+    t.includes("re)connect") ||
+    t.includes("device.gatt") ||
+    t.includes("networkerror") ||
+    t.includes("connection rejected") ||
+    t.includes("not supported") ||
+    (t.includes("disconnected") && t.includes("service"))
+  )
+    return "Printer ini Bluetooth classic (RPP02/EPPOS), tidak bisa cetak langsung dari browser laptop (laptop hanya BLE). Pakai Cetak USB kabel / Cetak Struk driver Windows, atau cetak dari HP via RawBT ya.";
+  return raw || fallback;
+}
+
 /** Ubah error apa pun jadi kalimat awam. fallback = pesan konteks per halaman. */
 export function friendlyError(err: unknown, fallback: string): string {
   // 1. Validasi form (zod): ambil pesan pertama yang sudah Bahasa Indonesia.
   if (err instanceof ZodError) {
     const first = err.issues[0]?.message;
     if (first) return technicalToLayman(first, fallback);
+    return fallback;
+  }
+
+  // 1b. Konteks cetak (fallback menyebut printer/cetak/USB/Bluetooth):
+  // JANGAN pernah dipetakan ke "Internet bermasalah". Kemarin Access denied
+  // + GATT NetworkError ketelan mapping network. Batal pilih -> pesan batal,
+  // selain itu -> pesan custom / fallback printer.
+  if (/cetak|printer|usb|bluetooth|gatt|rpp02|xprinter/i.test(fallback)) {
+    const raw = msgOf(err);
+    const name = nameOf(err);
+    const t = `${name} ${raw}`.toLowerCase();
+    if (
+      name === "AbortError" ||
+      t.includes("no device selected") ||
+      t.includes("no device") ||
+      t.includes("user cancell") ||
+      (t.includes("cancel") && t.includes("device"))
+    )
+      return "Pemilihan printer dibatalkan. Klik lagi lalu pilih printernya ya.";
+    if (raw) return technicalToLaymanPrinter(raw, fallback);
     return fallback;
   }
 
@@ -76,6 +136,25 @@ export function friendlyError(err: unknown, fallback: string): string {
 /** Terjemahkan sisa pesan teknis Inggris -> kalimat awam. */
 function technicalToLayman(raw: string, fallback: string): string {
   const t = raw.toLowerCase();
+  // Batal pilih device (USB/Bluetooth picker di-cancel): jangan lempar fallback teknis.
+  if (t.includes("no device") || t.includes("no device selected") || t.includes("aborted") || t.includes("cancelled") || t.includes("canceled") || t.includes("user cancelled") || t.includes("user canceled") || t.includes("notfound") || (t.includes("not found") && t.includes("device")))
+    return "Pemilihan printer dibatalkan. Klik lagi lalu pilih printernya ya.";
+  // Pesan printer/USB/Bluetooth kita sudah Bahasa Indonesia -> teruskan apa adanya.
+  // WAJIB setelah cek cancel & sebelum cek "network/unavailable": pesan USB
+  // "Driver unavailable" kemarin ketelan jadi "Internet bermasalah".
+  if (
+    t.includes("usb") ||
+    t.includes("bluetooth") ||
+    t.includes("printer") ||
+    t.includes("access denied") ||
+    t.includes("securityerror") ||
+    t.includes("notallowederror") ||
+    t.includes("claim") ||
+    t.includes("endpoint") ||
+    t.includes("rpp02") ||
+    t.includes("xprinter")
+  )
+    return raw || fallback;
   if (t.includes("missing or insufficient permissions") || t.includes("permission-denied") || t.includes("permission denied"))
     return "Tidak punya izin untuk aksi ini. Hubungi superadmin ya.";
   if (t.includes("network") || t.includes("failed to fetch") || t.includes("load failed") || t.includes("unavailable"))

@@ -7,6 +7,6 @@ export const generalSettingsSeed = {
   email: "gpenxfirmansyah@gmail.com",
   receiptHeader: "sedyo makmur motor",
   receiptFooter: "komplain telpono ojo ngrasani..",
-  paperSize: "80",
+  paperSize: "58",
   paymentMethods: ["cash", "qris", "transfer", "debit"],
 };

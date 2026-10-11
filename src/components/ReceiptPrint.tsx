@@ -8,6 +8,7 @@ function idr(n: number): string {
 
 /** Satu-satunya template struk HTML — dipakai Kasir + Riwayat.
  * Kepala atas TANPA kode transaksi (permintaan user).
+ * Hormat kami sudah dihapus (permintaan user) — jangan tambah lagi.
  * Barcode bawah SATU label (displayValue JsBarcode); tanpa <p> manual. */
 export function ReceiptPrint({ d }: { d: ReceiptDataInput }) {
   const barcodeRef = useRef<SVGSVGElement>(null);
