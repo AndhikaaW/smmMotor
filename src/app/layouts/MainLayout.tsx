@@ -9,6 +9,7 @@ import {
   Wrench,
   Receipt,
   BarChart2,
+  Wallet,
   Users,
   Settings,
   LogOut,
@@ -44,7 +45,10 @@ const SECTIONS: {
   },
   {
     label: "Laporan",
-    items: [{ to: "/reports", label: "Laporan", icon: BarChart2 }],
+    items: [
+      { to: "/reports", label: "Laporan", icon: BarChart2 },
+      { to: "/expenses", label: "Pengeluaran", icon: Wallet },
+    ],
   },
   {
     label: "Sistem",

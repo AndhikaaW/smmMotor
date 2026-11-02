@@ -13,6 +13,7 @@ import { PosPage } from "@/features/pos/PosPage";
 import { StockPage } from "@/features/stock/StockPage";
 import { TransactionsPage } from "@/features/transactions/TransactionsPage";
 import { ReportsPage } from "@/features/reports/ReportsPage";
+import { ExpensesPage } from "@/features/expenses/ExpensesPage";
 
 function protectedElement(node: ReactNode, roles?: ("superadmin" | "admin")[]) {
   return <ProtectedRoute roles={roles}>{node}</ProtectedRoute>;
@@ -33,6 +34,7 @@ export const router = createBrowserRouter(
         { path: "services", element: <ServicesPage /> },
         { path: "transactions", element: <TransactionsPage /> },
         { path: "reports", element: <ReportsPage /> },
+        { path: "expenses", element: <ExpensesPage /> },
         {
           path: "users",
           element: protectedElement(<UsersPage />, ["superadmin"]),

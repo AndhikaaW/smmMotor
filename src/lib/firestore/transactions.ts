@@ -2,6 +2,7 @@ import {
   Timestamp,
   collection,
   doc,
+  documentId,
   getDoc,
   getDocs,
   limit,
@@ -14,8 +15,14 @@ import {
 } from "firebase/firestore";
 import { z } from "zod";
 import { db } from "@/lib/firebase/client";
+import {
+  expenseCategoryLabel,
+  listExpenses,
+} from "@/lib/firestore/expenses";
 import type {
   CartItem,
+  Expense,
+  ExpenseCategory,
   PaymentMethod,
   StockMovementType,
   Transaction,
@@ -111,13 +118,27 @@ export async function checkout(input: CheckoutInput): Promise<CheckoutResult> {
           .map((i) => i.productId as string),
       ),
     ];
-    const productDocs = new Map<string, { price: number; stock: number; name: string }>();
+    const productDocs = new Map<
+      string,
+      { price: number; cost: number; stock: number; name: string }
+    >();
     for (const pid of productIds) {
       const snap = await tx.get(doc(db, "products", pid));
       if (!snap.exists()) throw new Error("Produk tidak ketemu. Muat ulang, mungkin sudah dihapus ya.");
-      const data = snap.data() as { sellingPrice: number; stock: number; name: string; isActive: boolean };
+      const data = snap.data() as {
+        sellingPrice: number;
+        purchasePrice?: number;
+        stock: number;
+        name: string;
+        isActive: boolean;
+      };
       if (!data.isActive) throw new Error(`Produk ${data.name} sedang nonaktif. Aktifkan di Data Produk ya.`);
-      productDocs.set(pid, { price: data.sellingPrice, stock: data.stock, name: data.name });
+      productDocs.set(pid, {
+        price: data.sellingPrice,
+        cost: typeof data.purchasePrice === "number" ? data.purchasePrice : 0,
+        stock: data.stock,
+        name: data.name,
+      });
     }
 
     // Validasi per-item: harga snapshot server + agregat qty per produk.
@@ -125,7 +146,7 @@ export async function checkout(input: CheckoutInput): Promise<CheckoutResult> {
     const serverItems: CartItem[] = parsed.items.map((item) => {
       if (item.type === "service") {
         if (!item.serviceId) throw new Error("Ada jasa tidak valid. Hapus lalu tambah ulang jasanya ya.");
-        return { ...item, subtotal: item.price * item.quantity };
+        return { ...item, cost: 0, subtotal: item.price * item.quantity };
       }
       const p = productDocs.get(item.productId as string);
       if (!p) throw new Error("Produk tidak ketemu. Muat ulang, mungkin sudah dihapus ya.");
@@ -133,7 +154,12 @@ export async function checkout(input: CheckoutInput): Promise<CheckoutResult> {
         item.productId as string,
         (qtyByProduct.get(item.productId as string) ?? 0) + item.quantity,
       );
-      return { ...item, price: p.price, subtotal: p.price * item.quantity };
+      return {
+        ...item,
+        price: p.price,
+        cost: p.cost,
+        subtotal: p.price * item.quantity,
+      };
     });
 
     const serverSubtotal = serverItems.reduce((s, i) => s + i.subtotal, 0);
@@ -368,13 +394,23 @@ export async function updateTransaction(
       if (item.type === "product" && item.productId)
         oldQty.set(item.productId, (oldQty.get(item.productId) ?? 0) + item.quantity);
     }
+    // Pertahankan snapshot HPP lama saat edit agar laba historis tidak
+    // berubah hanya karena harga beli master diperbarui.
+    const oldCostByProduct = new Map<string, number>();
+    for (const item of data.items) {
+      if (item.type === "product" && item.productId && typeof item.cost === "number")
+        oldCostByProduct.set(item.productId, item.cost);
+    }
     const newQty = new Map<string, number>();
     for (const item of parsed.items) {
       if (item.type === "product" && item.productId)
         newQty.set(item.productId, (newQty.get(item.productId) ?? 0) + item.quantity);
     }
     const allIds = [...new Set([...oldQty.keys(), ...newQty.keys()])];
-    const products = new Map<string, { price: number; stock: number; name: string; isActive: boolean }>();
+    const products = new Map<
+      string,
+      { price: number; cost: number; stock: number; name: string; isActive: boolean }
+    >();
     for (const pid of allIds) {
       const pSnap = await tx.get(doc(db, "products", pid));
       if (!pSnap.exists()) {
@@ -382,23 +418,40 @@ export async function updateTransaction(
           throw new Error("Ada produk yang sudah dihapus dari master. Kurangi/hapus itemnya ya.");
         continue;
       }
-      const p = pSnap.data() as { sellingPrice: number; stock: number; name: string; isActive: boolean };
-      products.set(pid, { price: p.sellingPrice, stock: p.stock, name: p.name, isActive: p.isActive });
+      const p = pSnap.data() as {
+        sellingPrice: number;
+        purchasePrice?: number;
+        stock: number;
+        name: string;
+        isActive: boolean;
+      };
+      products.set(pid, {
+        price: p.sellingPrice,
+        cost: typeof p.purchasePrice === "number" ? p.purchasePrice : 0,
+        stock: p.stock,
+        name: p.name,
+        isActive: p.isActive,
+      });
     }
     const serverItems: CartItem[] = parsed.items.map((item) => {
       if (item.type === "service") {
         if (!item.serviceId) throw new Error("Ada jasa tidak valid. Hapus lalu tambah ulang jasanya ya.");
-        return { ...item, subtotal: item.price * item.quantity };
+        return { ...item, cost: 0, subtotal: item.price * item.quantity };
       }
       const p = products.get(item.productId as string);
       if (!p) {
         const old = data.items.find((o) => o.type === "product" && o.productId === item.productId);
         const price = old?.price ?? item.price;
-        return { ...item, price, subtotal: price * item.quantity };
+        return { ...item, price, cost: old?.cost ?? 0, subtotal: price * item.quantity };
       }
       const diff = (newQty.get(item.productId as string) ?? 0) - (oldQty.get(item.productId as string) ?? 0);
       if (diff > 0 && !p.isActive) throw new Error(`Produk ${p.name} sedang nonaktif. Kembalikan jumlahnya ya.`);
-      return { ...item, price: p.price, subtotal: p.price * item.quantity };
+      return {
+        ...item,
+        price: p.price,
+        cost: oldCostByProduct.get(item.productId as string) ?? p.cost,
+        subtotal: p.price * item.quantity,
+      };
     });
     const serverTotal = serverItems.reduce((s, i) => s + i.subtotal, 0);
     const isCash = parsed.paymentMethod === "cash";
@@ -478,6 +531,12 @@ function wibMonthBounds(year: number, month: number): { start: Date; end: Date }
   };
 }
 
+export interface ExpenseRow {
+  category: ExpenseCategory;
+  label: string;
+  amount: number;
+}
+
 export interface DaySummary {
   revenue: number;
   count: number;
@@ -486,6 +545,19 @@ export interface DaySummary {
   serviceQty: number;
   productRevenue: number;
   serviceRevenue: number;
+  /** HPP / harga pokok penjualan barang pada periode. */
+  cogs: number;
+  /** Laba kotor = omzet - HPP. */
+  grossProfit: number;
+  /** Total beban operasional (pengeluaran) pada periode. */
+  operatingExpenses: number;
+  /** Laba bersih = laba kotor - beban operasional. */
+  netProfit: number;
+  expenseRows: ExpenseRow[];
+  /** Item lama tanpa snapshot HPP (memakai harga beli master sebagai estimasi). */
+  legacyCostItems: number;
+  /** Item lama yang HPP-nya tak bisa dicari (produk sudah dihapus) → dihitung 0. */
+  missingCostItems: number;
   topProducts: { name: string; qty: number; revenue: number }[];
   topServices: { name: string; qty: number; revenue: number }[];
   productRows: { name: string; qty: number; revenue: number }[];
@@ -501,6 +573,13 @@ export function emptySummary(): DaySummary {
     serviceQty: 0,
     productRevenue: 0,
     serviceRevenue: 0,
+    cogs: 0,
+    grossProfit: 0,
+    operatingExpenses: 0,
+    netProfit: 0,
+    expenseRows: [],
+    legacyCostItems: 0,
+    missingCostItems: 0,
     topProducts: [],
     topServices: [],
     productRows: [],
@@ -508,18 +587,42 @@ export function emptySummary(): DaySummary {
   };
 }
 
+/**
+ * HPP per unit. Transaksi baru menyimpan `cost` (snapshot harga beli);
+ * transaksi lama memakai harga beli master saat ini sebagai estimasi.
+ */
+function resolveUnitCost(
+  item: CartItem,
+  productCosts: Map<string, number>,
+  summary: DaySummary,
+): number {
+  if (typeof item.cost === "number" && Number.isFinite(item.cost)) return item.cost;
+  if (item.type === "service") return 0;
+  summary.legacyCostItems += 1;
+  const fallback = item.productId ? productCosts.get(item.productId) : undefined;
+  if (fallback === undefined) {
+    summary.missingCostItems += 1;
+    return 0;
+  }
+  return fallback;
+}
+
 function aggregateDocs(
   docs: { data: () => unknown }[],
+  productCosts: Map<string, number> = new Map(),
+  expenses: Expense[] = [],
 ): DaySummary {
   const summary = emptySummary();
   const productAgg = new Map<string, { qty: number; revenue: number }>();
   const serviceAgg = new Map<string, { qty: number; revenue: number }>();
+  const expenseAgg = new Map<ExpenseCategory, number>();
   for (const d of docs) {
     const t = d.data() as Omit<Transaction, "id">;
     if (t.status !== "completed") continue;
     summary.revenue += t.total;
     summary.count += 1;
     for (const item of t.items) {
+      summary.cogs += resolveUnitCost(item, productCosts, summary) * item.quantity;
       if (item.type === "product") {
         summary.productQty += item.quantity;
         summary.productRevenue += item.subtotal;
@@ -537,6 +640,19 @@ function aggregateDocs(
       }
     }
   }
+  for (const e of expenses) {
+    summary.operatingExpenses += e.amount;
+    expenseAgg.set(e.category, (expenseAgg.get(e.category) ?? 0) + e.amount);
+  }
+  summary.grossProfit = summary.revenue - summary.cogs;
+  summary.netProfit = summary.grossProfit - summary.operatingExpenses;
+  summary.expenseRows = [...expenseAgg.entries()]
+    .map(([category, amount]) => ({
+      category,
+      label: expenseCategoryLabel(category),
+      amount,
+    }))
+    .sort((a, b) => b.amount - a.amount);
   const byQty = <T extends { qty: number }>(a: T, b: T) => b.qty - a.qty;
   summary.productRows = [...productAgg.entries()]
     .map(([name, v]) => ({ name, ...v }))
@@ -547,6 +663,58 @@ function aggregateDocs(
   summary.topProducts = summary.productRows.slice(0, 5);
   summary.topServices = summary.serviceRows.slice(0, 5);
   return summary;
+}
+
+/** Harga beli master untuk item transaksi lama yang belum punya snapshot HPP. */
+async function fetchLegacyProductCosts(
+  docs: { data: () => unknown }[],
+): Promise<Map<string, number>> {
+  const ids = new Set<string>();
+  for (const d of docs) {
+    const t = d.data() as Omit<Transaction, "id">;
+    if (t.status !== "completed") continue;
+    for (const item of t.items) {
+      if (item.type === "product" && item.productId && typeof item.cost !== "number") {
+        ids.add(item.productId);
+      }
+    }
+  }
+  const costs = new Map<string, number>();
+  const list = [...ids];
+  for (let i = 0; i < list.length; i += 30) {
+    const chunk = list.slice(i, i + 30);
+    const snap = await getDocs(
+      query(collection(db, "products"), where(documentId(), "in", chunk)),
+    );
+    for (const docSnap of snap.docs) {
+      const data = docSnap.data() as { purchasePrice?: number };
+      costs.set(
+        docSnap.id,
+        typeof data.purchasePrice === "number" ? data.purchasePrice : 0,
+      );
+    }
+  }
+  return costs;
+}
+
+/**
+ * Ambil transaksi + pengeluaran + fallback HPP sekaligus, lalu agregasi.
+ * `withProfit=false` dipakai untuk query tren (tidak butuh laba).
+ */
+async function loadSummary(
+  start: Date,
+  end: Date,
+  expenseFrom: string,
+  expenseTo: string,
+  withProfit = true,
+): Promise<{ docs: { data: () => unknown }[]; summary: DaySummary }> {
+  const docs = await fetchRangeDocs(start, end);
+  if (!withProfit) return { docs, summary: aggregateDocs(docs) };
+  const [productCosts, expenses] = await Promise.all([
+    fetchLegacyProductCosts(docs),
+    listExpenses(expenseFrom, expenseTo),
+  ]);
+  return { docs, summary: aggregateDocs(docs, productCosts, expenses) };
 }
 /** Semua dokumen completed dalam [start, end) — paginasi agar rentang panjang tak kepotong limit. */
 async function fetchRangeDocs(start: Date, end: Date) {
@@ -606,7 +774,17 @@ function dayKeysBetween(fromStr: string, toStr: string): string[] {
 export async function summarizeDay(date: Date): Promise<DaySummary> {
   const key = new Date(date.getTime() + WIB_MS).toISOString().slice(0, 10);
   const { start, end } = wibDayBounds(key);
-  return aggregateDocs(await fetchRangeDocs(start, end));
+  const { summary } = await loadSummary(start, end, key, key);
+  return summary;
+}
+
+function monthDateStrings(year: number, month: number): { from: string; to: string } {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const dim = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return {
+    from: `${year}-${pad(month)}-01`,
+    to: `${year}-${pad(month)}-${pad(dim)}`,
+  };
 }
 
 export async function summarizeMonth(
@@ -614,7 +792,9 @@ export async function summarizeMonth(
   month: number,
 ): Promise<DaySummary> {
   const { start, end } = wibMonthBounds(year, month);
-  return aggregateDocs(await fetchRangeDocs(start, end));
+  const { from, to } = monthDateStrings(year, month);
+  const { summary } = await loadSummary(start, end, from, to);
+  return summary;
 }
 
 export interface RangeSummary extends DaySummary {
@@ -624,12 +804,21 @@ export interface RangeSummary extends DaySummary {
 }
 
 /** Ringkasan rentang WIB inklusif + tren harian per tanggal WIB. Maks 62 hari. */
-export async function summarizeRange(fromStr: string, toStr: string): Promise<RangeSummary> {
+export async function summarizeRange(
+  fromStr: string,
+  toStr: string,
+  options: { withProfit?: boolean } = {},
+): Promise<RangeSummary> {
   const keys = dayKeysBetween(fromStr, toStr);
   const { start } = wibDayBounds(fromStr);
   const { end } = wibDayBounds(toStr);
-  const docs = await fetchRangeDocs(start, end);
-  const summary = aggregateDocs(docs);
+  const { docs, summary } = await loadSummary(
+    start,
+    end,
+    fromStr,
+    toStr,
+    options.withProfit ?? true,
+  );
   const buckets = new Map<string, { label: string; revenue: number; count: number }>(
     keys.map((k) => {
       const [ky, km, kd] = k.split("-").map(Number);
@@ -658,7 +847,7 @@ export async function revenueTrendDaily(days = 14): Promise<TrendPoint[]> {
   const toStr = wibDateStr();
   const [ty, tm, td] = toStr.split("-").map(Number);
   const fromStr = new Date(Date.UTC(ty, tm - 1, td) - (days - 1) * DAY_MS).toISOString().slice(0, 10);
-  const { trend } = await summarizeRange(fromStr, toStr);
+  const { trend } = await summarizeRange(fromStr, toStr, { withProfit: false });
   return trend;
 }
 
@@ -669,6 +858,10 @@ export async function revenueTrendMonthly(
   const dim = new Date(Date.UTC(year, month, 0)).getUTCDate();
   const pad = (n: number) => String(n).padStart(2, "0");
   const fromStr = `${year}-${pad(month)}-01`;
-  const { trend } = await summarizeRange(fromStr, `${year}-${pad(month)}-${pad(dim)}`);
+  const { trend } = await summarizeRange(
+    fromStr,
+    `${year}-${pad(month)}-${pad(dim)}`,
+    { withProfit: false },
+  );
   return trend.map((t, i) => ({ ...t, label: String(i + 1) }));
 }

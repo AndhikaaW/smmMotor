@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
+import { Wallet } from "lucide-react";
 import {
   revenueTrendMonthly,
   summarizeDay,
@@ -18,6 +20,116 @@ type Tab = "daily" | "monthly" | "range";
 
 function idr(n: number) {
   return `Rp${n.toLocaleString("id-ID")}`;
+}
+
+function money(n: number) {
+  return `${n < 0 ? "−" : ""}Rp${Math.abs(n).toLocaleString("id-ID")}`;
+}
+
+function ProfitStatementCard({ summary }: { summary: DaySummary }) {
+  const grossMargin =
+    summary.revenue > 0 ? (summary.grossProfit / summary.revenue) * 100 : 0;
+  const netMargin =
+    summary.revenue > 0 ? (summary.netProfit / summary.revenue) * 100 : 0;
+  const profitClass = summary.netProfit < 0 ? "text-danger" : "text-success";
+  return (
+    <Card className="mt-4">
+      <CardContent className="p-4">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <h2 className="font-semibold">Laporan Laba Rugi</h2>
+            <p className="text-xs text-muted">
+              Omzet − HPP = laba kotor; laba kotor − beban operasional = laba bersih.
+            </p>
+          </div>
+          <Link
+            to="/expenses"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-2 text-xs font-medium hover:border-primary"
+          >
+            <Wallet className="h-3.5 w-3.5" />
+            Kelola Pengeluaran
+          </Link>
+        </div>
+
+        <div className="mt-4 divide-y divide-border rounded-xl border border-border text-sm">
+          <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+            <span>Omzet (pendapatan)</span>
+            <span className="font-mono font-medium">{idr(summary.revenue)}</span>
+          </div>
+          <div className="flex items-center justify-between gap-3 px-4 py-2.5 text-muted">
+            <span>HPP (harga pokok penjualan)</span>
+            <span className="font-mono">({idr(summary.cogs)})</span>
+          </div>
+          <div className="flex items-center justify-between gap-3 bg-background px-4 py-2.5 font-semibold">
+            <span>Laba Kotor</span>
+            <span className={`font-mono ${summary.grossProfit < 0 ? "text-danger" : "text-success"}`}>
+              {money(summary.grossProfit)}
+            </span>
+          </div>
+          <div className="px-4 py-2.5">
+            <div className="flex items-center justify-between gap-3 text-muted">
+              <span>Beban operasional</span>
+              <span className="font-mono">({idr(summary.operatingExpenses)})</span>
+            </div>
+            {summary.expenseRows.length > 0 ? (
+              <ul className="mt-1.5 space-y-1 pl-3 text-xs text-muted">
+                {summary.expenseRows.map((e) => (
+                  <li key={e.category} className="flex items-center justify-between gap-3">
+                    <span>• {e.label}</span>
+                    <span className="font-mono">{idr(e.amount)}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-1.5 text-xs text-muted">
+                Belum ada pengeluaran tercatat.{" "}
+                <Link to="/expenses" className="underline hover:text-text">
+                  Catat sekarang
+                </Link>
+                .
+              </p>
+            )}
+          </div>
+          <div className="flex items-center justify-between gap-3 bg-background px-4 py-3">
+            <span className="font-semibold">Laba Bersih</span>
+            <span className={`font-mono text-lg font-bold ${profitClass}`}>
+              {money(summary.netProfit)}
+            </span>
+          </div>
+        </div>
+
+        <div className="mt-3 flex flex-wrap gap-2 text-xs">
+          <span className="rounded-full border border-border bg-surface px-2.5 py-1 text-muted">
+            Margin kotor: <span className="font-medium text-text">{grossMargin.toFixed(1)}%</span>
+          </span>
+          <span className="rounded-full border border-border bg-surface px-2.5 py-1 text-muted">
+            Margin bersih: <span className="font-medium text-text">{netMargin.toFixed(1)}%</span>
+          </span>
+        </div>
+
+        {summary.legacyCostItems > 0 ? (
+          <p className="mt-3 rounded-lg border border-border bg-background px-3 py-2 text-xs text-muted">
+            {summary.legacyCostItems} item transaksi lama belum menyimpan snapshot harga beli;
+            HPP-nya memakai harga beli produk saat ini
+            {summary.missingCostItems > 0
+              ? `, dan ${summary.missingCostItems} item dihitung Rp0 karena produknya sudah dihapus`
+              : ""}
+            . Transaksi baru otomatis menyimpan HPP saat checkout.
+          </p>
+        ) : null}
+
+        {summary.cogs === 0 && summary.productRevenue > 0 ? (
+          <p className="mt-3 rounded-lg border border-warning/30 bg-warning/5 px-3 py-2 text-xs text-text">
+            HPP masih Rp0 padahal ada penjualan barang. Lengkapi{" "}
+            <Link to="/products" className="underline">
+              harga beli di menu Produk
+            </Link>{" "}
+            agar laba kotor &amp; laba bersih akurat.
+          </p>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
 }
 
 function SummaryView({
@@ -45,30 +157,45 @@ function SummaryView({
   }, [summary, q]);
   const avg = summary && summary.count > 0 ? Math.round(summary.revenue / summary.count) : 0;
   const statCards = [
-    { label: "Omzet", value: summary ? idr(summary.revenue) : "…" },
-    { label: "Transaksi", value: summary ? String(summary.count) : "…" },
-    { label: "Rata-rata / struk", value: summary ? idr(avg) : "…" },
+    { label: "Omzet", value: summary ? idr(summary.revenue) : "…", tone: "" },
+    { label: "HPP", value: summary ? idr(summary.cogs) : "…", tone: "" },
+    {
+      label: "Laba Kotor",
+      value: summary ? money(summary.grossProfit) : "…",
+      tone: summary && summary.grossProfit < 0 ? "text-danger" : "text-success",
+    },
+    {
+      label: "Laba Bersih",
+      value: summary ? money(summary.netProfit) : "…",
+      tone: summary && summary.netProfit < 0 ? "text-danger" : "text-success",
+    },
+    { label: "Transaksi", value: summary ? String(summary.count) : "…", tone: "" },
+    { label: "Rata-rata / struk", value: summary ? idr(avg) : "…", tone: "" },
     {
       label: "Barang",
       value: summary ? `${summary.productQty} pcs • ${idr(summary.productRevenue)}` : "…",
+      tone: "",
     },
     {
       label: "Jasa",
       value: summary ? `${summary.serviceQty}x • ${idr(summary.serviceRevenue)}` : "…",
+      tone: "",
     },
   ];
   return (
     <div>
-      <div className="mt-4 grid grid-cols-2 gap-3 xl:grid-cols-5">
+      <div className="mt-4 grid grid-cols-2 gap-3 xl:grid-cols-4">
         {statCards.map((s) => (
           <Card key={s.label}>
             <CardContent className="p-4">
               <p className="text-xs text-muted">{s.label}</p>
-              <p className="mt-1 text-xl font-bold">{s.value}</p>
+              <p className={`mt-1 text-xl font-bold ${s.tone}`}>{s.value}</p>
             </CardContent>
           </Card>
         ))}
       </div>
+
+      {summary ? <ProfitStatementCard summary={summary} /> : null}
 
       {trend && trendTitle ? (
         <div className="mt-4">
@@ -238,10 +365,10 @@ export function ReportsPage() {
         title="Laporan"
         description={
           tab === "daily"
-            ? "Ringkasan penjualan harian (WIB)."
+            ? "Ringkasan penjualan + laba rugi harian (WIB)."
             : tab === "monthly"
-              ? "Ringkasan penjualan bulanan + tren harian (WIB)."
-              : "Ringkasan rentang tanggal + tren harian (WIB, maks 62 hari)."
+              ? "Ringkasan penjualan + laba rugi bulanan dan tren harian (WIB)."
+              : "Ringkasan penjualan + laba rugi rentang tanggal dan tren harian (WIB, maks 62 hari)."
         }
       />
       <div className="mt-3 flex flex-wrap items-center gap-2">

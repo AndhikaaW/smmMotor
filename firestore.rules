@@ -82,6 +82,19 @@ service cloud.firestore {
       allow write: if isSuperadmin();
     }
 
+    // Beban operasional (gaji, sewa, listrik, dll) untuk laba bersih.
+    // Dibaca semua user aktif agar laporan bisa dihitung; tulis admin.
+    match /expenses/{id} {
+      allow read: if isActiveUser();
+      allow create, update: if isActiveUser()
+        && (isSuperadmin() || userDoc(request.auth.uid).role == 'admin')
+        && request.resource.data.amount is number
+        && request.resource.data.amount > 0
+        && request.resource.data.date is string;
+      allow delete: if isActiveUser()
+        && (isSuperadmin() || userDoc(request.auth.uid).role == 'admin');
+    }
+
     // Transaksi: create atomik + update atomik (cancel/edit) via client transaction.
     match /transactions/{id} {
       allow read: if isActiveUser();

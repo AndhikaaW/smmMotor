@@ -61,6 +61,8 @@ export interface CartItem {
   serviceId?: string;
   name: string;
   price: number;
+  /** HPP per unit saat transaksi (snapshot harga beli produk). Jasa = 0. */
+  cost?: number;
   quantity: number;
   subtotal: number;
 }
@@ -85,6 +87,27 @@ export interface Transaction {
   status: TransactionStatus;
   deletedAt?: Timestamp;
   deletedBy?: string;
+}
+
+export type ExpenseCategory =
+  | "salary"
+  | "rent"
+  | "utilities"
+  | "transport"
+  | "supplies"
+  | "maintenance"
+  | "other";
+
+export interface Expense {
+  id: string;
+  /** Tanggal WIB `YYYY-MM-DD` (bukan timestamp agar aman dari geser zona waktu). */
+  date: string;
+  category: ExpenseCategory;
+  description: string;
+  amount: number;
+  createdBy: string;
+  createdAt?: Timestamp;
+  updatedAt?: Timestamp;
 }
 
 export type StockMovementType = "in" | "out" | "adjustment" | "return";
