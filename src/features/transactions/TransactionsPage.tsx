@@ -19,6 +19,7 @@ import { BluetoothPreviewDialog } from "@/components/BluetoothPreviewDialog";
 import { getGeneralSettings } from "@/lib/firestore/settings";
 import type { CartItem, PaymentMethod, Transaction } from "@/types";
 import { friendlyError } from "@/lib/errors";
+import { matchesSearch } from "@/lib/search";
 
 const METHODS = ["", "cash", "qris", "transfer", "debit", "other"] as const;
 const STATUSES = ["completed", "all", "deleted"] as const;
@@ -435,7 +436,7 @@ export function TransactionsPage() {
                 </button>
               ))}
               <div>
-                {(servicesQuery.data ?? []).filter((s) => s.isActive && s.name.toLowerCase().includes(serviceSearch.trim().toLowerCase()) && !editItems.some((i) => i.type === "service" && i.serviceId === s.id)).slice(0, 4).map((s) => (
+                  {(servicesQuery.data ?? []).filter((s) => s.isActive && matchesSearch(serviceSearch, s.name) && !editItems.some((i) => i.type === "service" && i.serviceId === s.id)).slice(0, 4).map((s) => (
                   <button key={s.id} type="button" className="mr-2 rounded-lg border border-border px-2 py-1 text-xs hover:border-primary" onClick={() => setEditItems((prev) => [...prev, { type: "service", serviceId: s.id, name: s.name, price: s.price, quantity: 1, subtotal: s.price }])}>
                     + {s.name}
                   </button>

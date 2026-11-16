@@ -7,13 +7,13 @@ import {
   query,
   runTransaction,
   serverTimestamp,
-  startAfter,
   updateDoc,
   where,
 } from "firebase/firestore";
 import { z } from "zod";
 import { db } from "@/lib/firebase/client";
 import type { Product } from "@/types";
+import { matchesSearch } from "@/lib/search";
 
 export const productSchema = z.object({
   barcode: z.string({ error: "Barcode belum diisi. Scan atau tekan Auto ya." }).trim().min(1, "Barcode belum diisi. Scan atau tekan Auto ya."),
@@ -94,29 +94,17 @@ export interface ProductPage {
 export async function searchProductsByName(
   keyword: string,
   pageSize = 20,
-  cursor?: unknown,
+  _cursor?: unknown,
 ): Promise<ProductPage> {
-  const q = keyword.trim();
-  const end = q + String.fromCharCode(0xf8ff);
-  const clauses = [
-    orderBy("name"),
-    ...(cursor ? [startAfter(cursor as never)] : []),
-    limit(pageSize),
-  ];
-  const snap = q
-    ? await getDocs(
-        query(
-          collection(db, "products"),
-          where("name", ">=", q),
-          where("name", "<", end),
-          ...clauses,
-        ),
-      )
-    : await getDocs(query(collection(db, "products"), ...clauses));
-  const last = snap.docs[snap.docs.length - 1];
+  // Firestore string ranges are case-sensitive. Read the bounded product list,
+  // then normalize locally so legacy documents remain searchable too.
+  const products = await listProducts();
+  const rows = products
+    .filter((p) => matchesSearch(keyword, p.name, p.barcode))
+    .slice(0, pageSize);
   return {
-    rows: snap.docs.map((d) => normalizeProduct(d.id, d.data() as RawDoc)),
-    lastVisible: last ?? null,
+    rows,
+    lastVisible: null,
   };
 }
 

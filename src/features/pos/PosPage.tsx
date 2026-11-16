@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { useAuth } from "@/app/providers/AuthProvider";
 import { getProductByBarcode, searchProductsByName, updateProduct } from "@/lib/firestore/products";
+import { matchesSearch } from "@/lib/search";
 import { QuickAddDialog } from "@/features/pos/QuickAddDialog";
 import { QuickAddServiceDialog } from "@/features/pos/QuickAddServiceDialog";
 import { listServices, updateService } from "@/lib/firestore/services";
@@ -96,9 +97,8 @@ export function PosPage() {
     () => (servicesQuery.data ?? []).filter((s) => s.isActive),
     [servicesQuery.data],
   );
-  const q = search.trim().toLowerCase();
-  const filteredServices = q
-    ? activeServices.filter((s) => s.name.toLowerCase().includes(q))
+  const filteredServices = search.trim()
+    ? activeServices.filter((s) => matchesSearch(search, s.name))
     : activeServices;
   const paymentMethods = settingsQuery.data?.paymentMethods ?? ["cash"];
 

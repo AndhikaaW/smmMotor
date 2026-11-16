@@ -2,13 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { Plus, Pencil, PackageX, RefreshCw } from "lucide-react";
+import { matchesSearch } from "@/lib/search";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NumberInput } from "@/components/ui/number-input";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { PageHeader, FormField, EmptyState } from "@/components/ui/shared";
-import {
+import { 
   Dialog,
   DialogContent,
   DialogHeader,
@@ -90,12 +91,8 @@ export function ProductsPage() {
   });
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
     const rows = productsQuery.data ?? [];
-    if (!q) return rows;
-    return rows.filter(
-      (p) => p.name.toLowerCase().includes(q) || p.barcode.toLowerCase().includes(q),
-    );
+    return rows.filter((p) => matchesSearch(search, p.name, p.barcode));
   }, [productsQuery.data, search]);
 
   function openCreate() {
