@@ -11,7 +11,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { useAuth } from "@/app/providers/AuthProvider";
-import { getProductByBarcode, searchProductsByName, updateProduct } from "@/lib/firestore/products";
+import { getProductByBarcode, listProducts, updateProduct } from "@/lib/firestore/products";
 import { matchesSearch } from "@/lib/search";
 import { QuickAddDialog } from "@/features/pos/QuickAddDialog";
 import { QuickAddServiceDialog } from "@/features/pos/QuickAddServiceDialog";
@@ -85,13 +85,13 @@ export function PosPage() {
   const [priceError, setPriceError] = useState<string | null>(null);
 
   const productSearchQuery = useQuery({
-    queryKey: ["products", "pos-search", search.trim()],
-    queryFn: () => searchProductsByName(search.trim(), 24),
+    queryKey: ["products", "pos-list"],
+    queryFn: listProducts,
     staleTime: 60 * 1000,
   });
   const activeProducts = useMemo(
-    () => (productSearchQuery.data?.rows ?? []).filter((p) => p.isActive),
-    [productSearchQuery.data],
+    () => (productSearchQuery.data ?? []).filter((p) => p.isActive && matchesSearch(search, p.name, p.barcode)).slice(0, 24),
+    [productSearchQuery.data, search],
   );
   const activeServices = useMemo(
     () => (servicesQuery.data ?? []).filter((s) => s.isActive),
